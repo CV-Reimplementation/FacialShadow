@@ -10,7 +10,7 @@ import torch.utils.checkpoint as checkpoint
 import torchvision.transforms as transforms
 from scipy.spatial import ConvexHull
 from sklearn.preprocessing import MinMaxScaler
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.layers import DropPath, to_2tuple, trunc_normal_
 
 
 class Face(nn.Module):
