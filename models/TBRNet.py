@@ -3,7 +3,6 @@ import torch.nn as nn
 import torchvision.models as models
 from torch.autograd import Variable
 import numpy as np
-import os
 import torch.nn.functional as F
 
 

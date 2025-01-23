@@ -155,7 +155,7 @@ class Backbone(nn.Module):
       super(Backbone, self).__init__()
       
       if backbones == 'vgg16':
-        modules = (models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).features[:-1])
+        modules = (models.vgg16(weights='DEFAULT').features[:-1])
     
         self.block1 = modules[0:4]
         self.block2 = modules[4:9]
