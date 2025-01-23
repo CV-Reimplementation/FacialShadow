@@ -14,3 +14,5 @@ from .BMNet import BMNet
 from .IFBlend import IFBlend
 from .S3R_Net import S3R_Net
 from .Shadow_R import Shadow_R
+from .ST_CGAN import ST_CGAN
+from .MaskShadowGAN import MaskShadowGAN
