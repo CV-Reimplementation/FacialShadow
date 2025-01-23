@@ -35,8 +35,10 @@ class DataLoaderTrain(Dataset):
     def mixup(self, inp_img, tar_img, mode='mixup'):
         mixup_index_ = random.randint(0, self.sizex - 1)
 
-        mixup_tar_img = self.transform(self.tar_files[mixup_index_])['image']
-        mixup_inp_img = self.degrade(mixup_tar_img)['image']
+        mixup_tar_img = self.tar_files[mixup_index_]
+
+        mixup_tar_img = self.transform(image=mixup_tar_img)['image']
+        mixup_inp_img = self.degrade(image=mixup_tar_img)['image']
 
         alpha = 0.2
         lam = np.random.beta(alpha, alpha)
@@ -75,9 +77,9 @@ class DataLoaderTrain(Dataset):
 
         tar_img = self.tar_files[index_]
 
-        tar_img = self.transform(tar_img)['image']
+        tar_img = self.transform(image=tar_img)['image']
 
-        inp_img = self.degrade(tar_img)['image']
+        inp_img = self.degrade(image=tar_img)['image']
 
         inp_img = F.to_tensor(inp_img)
         tar_img = F.to_tensor(tar_img)

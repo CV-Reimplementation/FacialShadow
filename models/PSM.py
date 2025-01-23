@@ -247,9 +247,9 @@ class ShareLayer(nn.Module):
         return x_share_dereg
 
 
-class Google(nn.Module):
+class PSM(nn.Module):
     def __init__(self, n_res=6):
-        super(Google, self).__init__()
+        super(PSM, self).__init__()
         n_ch = [32, 64, 64, 96, 128, 256, 256]
         self.n_ch = n_ch
         self.conv1 = Conv(in_ch=3, ch=n_ch[0], ksize=7)
@@ -298,7 +298,7 @@ class Google(nn.Module):
 
 
 if __name__ == '__main__':
-    gen = Google()
+    gen = PSM()
     x = torch.randn(1, 3, 256, 256)
     mask = torch.randn(1, 1, 256, 256)
     out = gen(x)
