@@ -77,7 +77,8 @@ class Config(object):
         self._C.TRAINING.VAL_AFTER_EVERY = 3
         self._C.TRAINING.RESUME = False
         self._C.TRAINING.TRAIN_FILE = 'images_dir/train'
-        self._C.TRAINING.VAL_FILE = 'images_dir/val'
+        self._C.TRAINING.VAL_FILE1 = 'images_dir/val'
+        self._C.TRAINING.VAL_FILE2 = 'images_dir/val'
         self._C.TRAINING.SAVE_DIR = 'checkpoints'
         self._C.TRAINING.PS_W = 512
         self._C.TRAINING.PS_H = 512

@@ -33,14 +33,17 @@ def train():
 
     # Data Loader
     train_file = opt.TRAINING.TRAIN_FILE
-    val_file = opt.TRAINING.VAL_FILE
+    val_file1 = opt.TRAINING.VAL_FILE1
+    val_file2 = opt.TRAINING.VAL_FILE2
 
     train_dataset = get_training_data(train_file, {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
-    trainloader = DataLoader(dataset=train_dataset, batch_size=opt.OPTIM.BATCH_SIZE, shuffle=True, num_workers=32,
-                             drop_last=False, pin_memory=True)
-    val_dataset = get_validation_data(val_file)
-    testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=16, drop_last=False,
-                            pin_memory=True)
+    trainloader = DataLoader(dataset=train_dataset, batch_size=opt.OPTIM.BATCH_SIZE, shuffle=True, num_workers=32, drop_last=False, pin_memory=True)
+    
+    val_dataset1 = get_validation_data(val_file1, None)
+    testloader1 = DataLoader(dataset=val_dataset1, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
+    
+    val_dataset2 = get_validation_data(val_file2, None)
+    testloader2 = DataLoader(dataset=val_dataset2, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
 
     # Model & Loss
     model = DeShadowNet()
@@ -51,15 +54,18 @@ def train():
     optimizer_b = optim.AdamW(model.parameters(), lr=opt.OPTIM.LR_INITIAL, betas=(0.9, 0.999), eps=1e-8)
     scheduler_b = optim.lr_scheduler.CosineAnnealingLR(optimizer_b, opt.OPTIM.NUM_EPOCHS, eta_min=opt.OPTIM.LR_MIN)
 
-    trainloader, testloader = accelerator.prepare(trainloader, testloader)
+    trainloader, testloader1, testloader2 = accelerator.prepare(trainloader, testloader1, testloader2)
     model = accelerator.prepare(model)
     optimizer_b, scheduler_b = accelerator.prepare(optimizer_b, scheduler_b)
 
     start_epoch = 1
     best_epoch = 1
-    best_rmse = 100
+    
+    best_psnr1 = 0
+    best_psnr2 = 0
 
-    size = len(testloader)
+    size1 = len(testloader1)
+    size2 = len(testloader2)
 
     # training
     for epoch in range(start_epoch, opt.OPTIM.NUM_EPOCHS + 1):
@@ -72,7 +78,7 @@ def train():
 
             # forward
             optimizer_b.zero_grad()
-            res = model(inp)
+            res = model(inp).clamp(0, 1)
 
             loss_psnr = criterion_psnr(res, tar)
             loss_ssim = 1 - structural_similarity_index_measure(res, tar, data_range=1)
@@ -89,49 +95,54 @@ def train():
         # testing
         if epoch % opt.TRAINING.VAL_AFTER_EVERY == 0:
             model.eval()
-            psnr = 0
-            ssim = 0
-            lpips = 0
-            rmse = 0
-            for _, data in enumerate(tqdm(testloader, disable=not accelerator.is_local_main_process)):
+
+            psnr1 = 0
+            for _, data in enumerate(tqdm(testloader1, disable=not accelerator.is_local_main_process)):
                 # get the inputs; data is a list of [targets, inputs, filename]
                 inp = data[0].contiguous()
                 tar = data[1]
 
                 with torch.no_grad():
-                    res = model(inp)
+                    res = model(inp).clamp(0, 1)
 
                 res, tar = accelerator.gather((res, tar))
 
-                psnr += peak_signal_noise_ratio(res, tar, data_range=1).item()
-                ssim += structural_similarity_index_measure(res, tar, data_range=1).item()
-                lpips += criterion_lpips(res, tar).item()
-                rmse += mean_squared_error(torch.mul(res, 255).flatten(), torch.mul(tar, 255).flatten(), squared=False).item()
+                psnr1 += peak_signal_noise_ratio(res, tar, data_range=1).item()
 
-            psnr /= size
-            ssim /= size
-            lpips /= size
-            rmse /= size
+            psnr1 /= size1
 
-            if rmse < best_rmse:
+            psnr2 = 0
+            for _, data in enumerate(tqdm(testloader2, disable=not accelerator.is_local_main_process)):
+                # get the inputs; data is a list of [targets, inputs, filename]
+                inp = data[0].contiguous()
+                tar = data[1]
+
+                with torch.no_grad():
+                    res = model(inp).clamp(0, 1)
+
+                res, tar = accelerator.gather((res, tar))
+
+                psnr2 += peak_signal_noise_ratio(res, tar, data_range=1).item()
+
+            psnr2 /= size2
+
+            if psnr1 > best_psnr1 and psnr2 > best_psnr2:
                 # save model
                 best_epoch = epoch
-                best_rmse = rmse
+                best_psnr1 = psnr1
+                best_psnr2 = psnr2
                 save_checkpoint({
                     'state_dict': model.state_dict(),
                 }, epoch, opt.MODEL.SESSION, opt.TRAINING.SAVE_DIR)
 
-            accelerator.log({
-                "PSNR": psnr,
-                "SSIM": ssim,
-                "RMSE": rmse,
-                "LPIPS": lpips
-            }, step=epoch)
+            # accelerator.log({
+            #     "PSNR": psnr1,
+            #     "SSIM": ssim1,
+            #     "LPIPS": lpips1
+            # }, step=epoch)
 
             if accelerator.is_local_main_process:
-                print(
-                    "epoch: {}, RMSE:{}, PSNR: {}, SSIM: {}, LPIPS: {}, best RMSE: {}, best epoch: {}"
-                    .format(epoch, rmse, psnr, ssim, lpips, best_rmse, best_epoch))
+                print("epoch: {}, best PSNR1: {}, best PSNR2: {}, best epoch: {}".format(epoch, best_psnr1, best_psnr2, best_epoch))
 
     accelerator.end_training()
 

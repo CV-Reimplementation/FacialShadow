@@ -10,32 +10,27 @@ def is_image_file(filename):
 
 
 class DataLoaderTrain(Dataset):
-    def __init__(self, rgb_file, img_options=None, degrade=False):
+    def __init__(self, rgb_file, img_options=None):
         super(DataLoaderTrain, self).__init__()
 
         with np.load(rgb_file) as data:
-            self.tar_files = data['gt']
+            self.tar_files = data['tar']
 
         self.img_options = img_options
         self.sizex = len(self.tar_files)  # get the size of target
 
         self.transform = A.Compose([
-                A.Transpose(p=0.3),
-                A.Flip(p=0.3),
-                A.RandomRotate90(p=0.3),
-                A.Rotate(p=0.3),
-                A.Resize(height=img_options['h'], width=img_options['w']),
+            A.Transpose(p=0.3),
+            A.Flip(p=0.3),
+            A.RandomRotate90(p=0.3),
+            A.Rotate(p=0.3),
+            A.Resize(height=img_options['h'], width=img_options['w']),
         ])
         
-        if degrade:
-            self.degrade = A.Compose([
-                # A.RandomShadow(p=0.5)
-                A.RandomShadow(shadow_roi=(0, 0, 1, 1), num_shadows_upper=10, shadow_dimension=15, p=1)
-            ])
-        else:
-            self.degrade = A.Compose([
-                A.NoOp()
-            ])
+        self.degrade = A.Compose([
+            # A.RandomShadow(p=0.5)
+            A.RandomShadow(shadow_roi=(0, 0, 1, 1), num_shadows_upper=10, shadow_dimension=15, p=1)
+        ])
 
     def mixup(self, inp_img, tar_img, mode='mixup'):
         mixup_index_ = random.randint(0, self.sizex - 1)
@@ -102,7 +97,7 @@ class DataLoaderVal(Dataset):
 
         with np.load(rgb_file) as data:
             self.inp_files = data['inp']
-            self.tar_files = data['gt']
+            self.tar_files = data['tar']
 
         self.img_options = img_options
         self.sizex = len(self.inp_files)  # get the size of target
