@@ -2,8 +2,6 @@ VERBOSE: True
 
 MODEL:
   SESSION: 'SRD'
-  INPUT: 'input'
-  TARGET: 'target'
 
 # Optimization arguments.
 OPTIM:
@@ -19,9 +17,9 @@ TRAINING:
   RESUME: False
   PS_W: 256
   PS_H: 256
-  TRAIN_FILE: '../dataset/SRD/train/' # path to training data
-  VAL_FILE1: '../dataset/SRD/test/'     # path to validation data
-  VAL_FILE2: '../dataset/SRD/test/'     # path to validation data
+  TRAIN_FILE: '../dataset/FFHQ.npz' # path to training data
+  VAL_FILE1: '../dataset/ASFW.npz'     # path to validation data
+  VAL_FILE2: '../dataset/UCB.npz'     # path to validation data
   SAVE_DIR: './checkpoints/'          # path to save models and images
   ORI: False
 
