@@ -19,8 +19,8 @@ TRAINING:
   RESUME: False
   PS_W: 256
   PS_H: 256
-  TRAIN_DIR: '../dataset/SRD/train/' # path to training data
-  VAL_DIR: '../dataset/SRD/test/'     # path to validation data
+  TRAIN_FILE: '../dataset/SRD/train/' # path to training data
+  VAL_FILE: '../dataset/SRD/test/'     # path to validation data
   SAVE_DIR: './checkpoints/'          # path to save models and images
   ORI: False
 

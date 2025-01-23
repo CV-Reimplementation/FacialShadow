@@ -68,23 +68,8 @@ class VGG19(nn.Module):
         }
         return out
 
-    def load_pretrained(self, vgg19_weights_path, gpu):
-        if os.path.exists(vgg19_weights_path):
-            if torch.cuda.is_available():
-                data = torch.load(vgg19_weights_path)
-                print("load vgg_pretrained_model:"+vgg19_weights_path)
-            else:
-                data = torch.load(vgg19_weights_path,
-                                  map_location=lambda storage, loc: storage)
-            self.initial_model(data)
-            self.to(gpu)
-        else:
-            print("you need download vgg_pretrained_model in the directory of  "+str(self.config.DATA_ROOT) +
-                  "\n'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth'")
-            raise Exception("Don't load vgg_pretrained_model")
-
     def initial_model(self, data=None):
-        vgg19 = models.vgg19()
+        vgg19 = models.vgg19(weights='DEFAULT')
         if data is not None:
             vgg19.load_state_dict(data)
         features = vgg19.features

@@ -248,7 +248,7 @@ class ShareLayer(nn.Module):
 
 
 class Google(nn.Module):
-    def __init__(self, downsize=1, n_res=6):
+    def __init__(self, n_res=6):
         super(Google, self).__init__()
         n_ch = [32, 64, 64, 96, 128, 256, 256]
         self.n_ch = n_ch

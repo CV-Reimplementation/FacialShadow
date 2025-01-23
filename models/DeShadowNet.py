@@ -7,7 +7,7 @@ import torchvision
 class G_Net(nn.Module):
     def __init__(self):
         super(G_Net, self).__init__()
-        self.vgg16_pretrained = torchvision.models.vgg16(weights=torchvision.models.VGG16_Weights.IMAGENET1K_FEATURES)
+        self.vgg16_pretrained = torchvision.models.vgg16(weights='default')
         self.vgg16_pretrained.requires_grad_ = False
         '''
         Change Maxpool Stride to 1

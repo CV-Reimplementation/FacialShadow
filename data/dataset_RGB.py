@@ -1,9 +1,6 @@
-import os
-
 import albumentations as A
 import numpy as np
 import torchvision.transforms.functional as F
-from PIL import Image
 from torch.utils.data import Dataset
 import random
 
@@ -12,70 +9,45 @@ def is_image_file(filename):
     return any(filename.endswith(extension) for extension in ['jpeg', 'JPEG', 'jpg', 'png', 'JPG', 'PNG', 'gif'])
 
 
-class DataReader(Dataset):
-    def __init__(self, img_dir, inp='input', tar='target', mode='train', ori=False, img_options=None):
-        super(DataReader, self).__init__()
+class DataLoaderTrain(Dataset):
+    def __init__(self, rgb_file, img_options=None, degrade=False):
+        super(DataLoaderTrain, self).__init__()
 
-        inp_files = sorted(os.listdir(os.path.join(img_dir, inp)))
-        tar_files = sorted(os.listdir(os.path.join(img_dir, tar)))
-
-        self.inp_filenames = [os.path.join(img_dir, inp, x) for x in inp_files if is_image_file(x)]
-        self.tar_filenames = [os.path.join(img_dir, tar, x) for x in tar_files if is_image_file(x)]
-
-        self.mode = mode
+        with np.load(rgb_file) as data:
+            self.tar_files = data['gt']
 
         self.img_options = img_options
+        self.sizex = len(self.tar_files)  # get the size of target
 
-        self.sizex = len(self.tar_filenames)  # get the size of target
-
-        if self.mode == 'train':
-            self.transform = A.Compose([
+        self.transform = A.Compose([
+                A.Transpose(p=0.3),
                 A.Flip(p=0.3),
                 A.RandomRotate90(p=0.3),
                 A.Rotate(p=0.3),
-                A.Transpose(p=0.3),
-                A.RandomResizedCrop(height=img_options['h'], width=img_options['w']),
-            ],
-                additional_targets={
-                    'target': 'image',
-                }
-            )
+                A.Resize(height=img_options['h'], width=img_options['w']),
+        ])
+        
+        if degrade:
             self.degrade = A.Compose([
                 # A.RandomShadow(p=0.5)
                 A.RandomShadow(shadow_roi=(0, 0, 1, 1), num_shadows_upper=10, shadow_dimension=15, p=1)
             ])
         else:
-            if ori:
-                self.transform = A.Compose([
-                    A.NoOp(),
-                ],
-                    additional_targets={
-                        'target': 'image',
-                    }
-                )
-            else:
-                self.transform = A.Compose([
-                    A.Resize(height=img_options['h'], width=img_options['w']),
-                ],
-                    is_check_shapes=False,
-                    additional_targets={
-                        'target': 'image',
-                    }
-                )
             self.degrade = A.Compose([
-                A.NoOp(),
+                A.NoOp()
             ])
 
     def mixup(self, inp_img, tar_img, mode='mixup'):
         mixup_index_ = random.randint(0, self.sizex - 1)
 
-        _, transformed = self.load(mixup_index_)
+        mixup_tar_img = self.transform(self.tar_files[mixup_index_])['image']
+        mixup_inp_img = self.degrade(mixup_tar_img)['image']
 
         alpha = 0.2
         lam = np.random.beta(alpha, alpha)
 
-        mixup_inp_img = F.to_tensor(self.degrade(image=transformed['image'])['image'])
-        mixup_tar_img = F.to_tensor(transformed['target'])
+        mixup_inp_img = F.to_tensor(mixup_inp_img)
+        mixup_tar_img = F.to_tensor(mixup_tar_img)
 
         if mode == 'mixup':
             inp_img = lam * inp_img + (1 - lam) * mixup_inp_img
@@ -99,42 +71,49 @@ class DataReader(Dataset):
 
         return inp_img, tar_img
 
+
     def __len__(self):
         return self.sizex
 
     def __getitem__(self, index):
         index_ = index % self.sizex
 
-        tar_path, transformed = self.load(index_)
-        
-        if self.mode == 'train':
-            inp_img = F.to_tensor(self.degrade(image=transformed['image'])['image'])
-        else:
-            inp_img = F.to_tensor(transformed['image'])
-        tar_img = F.to_tensor(transformed['target'])
+        tar_img = self.tar_files[index_]
 
-        if self.mode == 'train':
-            if index_ > 0 and index_ % 3 == 0:
-                if random.random() > 0.5:
-                    inp_img, tar_img = self.mixup(inp_img, tar_img, mode='mixup')
-                else:
-                    inp_img, tar_img = self.mixup(inp_img, tar_img, mode='cutmix')
+        tar_img = self.transform(tar_img)['image']
+
+        inp_img = self.degrade(tar_img)['image']
+
+        inp_img = F.to_tensor(inp_img)
+        tar_img = F.to_tensor(tar_img)
+
+        if index_ > 0 and index_ % 3 == 0:
+            if random.random() > 0.5:
+                inp_img, tar_img = self.mixup(inp_img, tar_img, mode='mixup')
+            else:
+                inp_img, tar_img = self.mixup(inp_img, tar_img, mode='cutmix')
+
+        return inp_img, tar_img
 
 
-        filename = os.path.basename(tar_path)
+class DataLoaderVal(Dataset):
+    def __init__(self, rgb_file, img_options=None):
+        super(DataLoaderVal, self).__init__()
 
-        return inp_img, tar_img, filename
+        with np.load(rgb_file) as data:
+            self.inp_files = data['inp']
+            self.tar_files = data['gt']
 
-    def load(self, index_):
-        inp_path = self.inp_filenames[index_]
-        tar_path = self.tar_filenames[index_]
+        self.img_options = img_options
+        self.sizex = len(self.inp_files)  # get the size of target
 
-        inp_img = Image.open(inp_path).convert('RGB')
-        tar_img = Image.open(tar_path).convert('RGB')
+    def __len__(self):
+        return self.sizex
 
-        inp_img = np.array(inp_img)
-        tar_img = np.array(tar_img)
+    def __getitem__(self, index):
+        index_ = index % self.sizex
 
-        transformed = self.transform(image=inp_img, target=tar_img)
+        inp_img = F.to_tensor(self.inp_files[index_])
+        tar_img = F.to_tensor(self.tar_files[index_])
 
-        return tar_path, transformed
+        return inp_img, tar_img

@@ -9,7 +9,7 @@ from torchmetrics.functional.regression import mean_squared_error
 from tqdm import tqdm
 
 from config import Config
-from data import get_data
+from data import get_training_data, get_validation_data
 from models import *
 from utils import *
 
@@ -27,21 +27,19 @@ def train():
     device = accelerator.device
 
     config = {
-        "dataset": opt.TRAINING.TRAIN_DIR
+        "dataset": opt.TRAINING.TRAIN_FILE
     }
-    accelerator.init_trackers("shadow", config=config)
+    accelerator.init_trackers("FacialShadow", config=config)
 
     # Data Loader
-    train_dir = opt.TRAINING.TRAIN_DIR
-    val_dir = opt.TRAINING.VAL_DIR
+    train_file = opt.TRAINING.TRAIN_FILE
+    val_file = opt.TRAINING.VAL_FILE
 
-    train_dataset = get_data(train_dir, opt.MODEL.INPUT, opt.MODEL.TARGET, 'train', opt.TRAINING.ORI,
-                             {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
-    trainloader = DataLoader(dataset=train_dataset, batch_size=opt.OPTIM.BATCH_SIZE, shuffle=True, num_workers=16,
+    train_dataset = get_training_data(train_file, {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
+    trainloader = DataLoader(dataset=train_dataset, batch_size=opt.OPTIM.BATCH_SIZE, shuffle=True, num_workers=32,
                              drop_last=False, pin_memory=True)
-    val_dataset = get_data(val_dir, opt.MODEL.INPUT, opt.MODEL.TARGET, 'test', opt.TRAINING.ORI,
-                           {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
-    testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=8, drop_last=False,
+    val_dataset = get_validation_data(val_file)
+    testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=16, drop_last=False,
                             pin_memory=True)
 
     # Model & Loss
@@ -80,7 +78,7 @@ def train():
             loss_ssim = 1 - structural_similarity_index_measure(res, tar, data_range=1)
             loss_lpips = criterion_lpips(res, tar)
 
-            train_loss = loss_psnr + 0.3 * loss_ssim + 0.7 * loss_lpips
+            train_loss = loss_psnr + 0.2 * loss_ssim + 0.2 * loss_lpips
 
             # backward
             accelerator.backward(train_loss)
