@@ -27,7 +27,7 @@ class MaskShadowGAN(nn.Module):
 
         # Initial convolution block
         model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc+1, 64, 7),  # + mask
+                 nn.Conv2d(input_nc, 64, 7),  # + mask
                  nn.InstanceNorm2d(64),
                  nn.ReLU(inplace=True)]
 
