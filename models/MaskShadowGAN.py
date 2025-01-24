@@ -27,7 +27,7 @@ class MaskShadowGAN(nn.Module):
 
         # Initial convolution block
         model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, 64, 7),  # + mask
+                 nn.Conv2d(input_nc+1, 64, 7),  # + mask
                  nn.InstanceNorm2d(64),
                  nn.ReLU(inplace=True)]
 
@@ -61,15 +61,16 @@ class MaskShadowGAN(nn.Module):
 
         self.model = nn.Sequential(*model)
 
-    def forward(self, x):
+    def forward(self, x, mas):
         # (min=-1, max=1) #just learn a residual
-        return (self.model(x) + x).tanh()
+        return (self.model(torch.cat((x, mas), 1)) + x).tanh()
 
 
 if __name__ == '__main__':
-    x = torch.rand(1, 3, 256, 256).cuda()
-    model = MaskShadowGAN().cuda()
+    x = torch.rand(1, 3, 256, 256)
+    m = torch.rand(1, 1, 256, 256)
+    model = MaskShadowGAN()
     model.eval()
     with torch.no_grad():
-        res = model(x)
+        res = model(x, m)
         print(res.shape)

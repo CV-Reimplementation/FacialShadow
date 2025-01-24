@@ -430,7 +430,7 @@ class TBRNet(nn.Module):
         self.toimg3 = conv2d_layer(
             channels, 3, kernel_size=1,  padding=0, dilation=1, norm="none", activation_fn="Sigmoid")
 
-    def forward(self, x):
+    def forward(self, x, mas):
         size = (x.shape[2], x.shape[3])
 
         # vgg

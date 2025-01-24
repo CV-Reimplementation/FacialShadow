@@ -67,7 +67,7 @@ class DeShadowNet(nn.Module):
         self.final_conv = nn.Conv2d(in_channels=6, out_channels=3, kernel_size=(1,1), stride=(1,1), padding=(0,0))
 
 
-    def forward(self, x):
+    def forward(self, x, mas):
         c11 = self.maxpool21(self.dropout(F.relu(self.conv21(x), inplace=True)))
         c21 = self.maxpool22(self.dropout(F.relu(self.conv31(x), inplace=True)))
         c = self.gnet(x)

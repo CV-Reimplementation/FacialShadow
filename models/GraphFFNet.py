@@ -2179,7 +2179,7 @@ class GraphFFNet(nn.Module):
                 nn.init.kaiming_normal_(m.weight.data)
                 m.bias.data.zero_()
 
-    def forward(self, x):
+    def forward(self, x, mas):
         """Through encoder, then decoder by adding U-skip connections. """
         flow_in = x
 

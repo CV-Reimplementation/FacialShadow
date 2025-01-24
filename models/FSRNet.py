@@ -842,7 +842,7 @@ class FSRNet(nn.Module):
         self.Edge = Edge_UNet(feature=True)
         self.Generator = Generator()
 
-    def forward(self, x):
+    def forward(self, x, mas):
         _, facefeaturemaps = self.Face(x)
         _, edgefeaturemaps = self.Edge(x)
         out = self.Generator(x,facefeaturemaps,edgefeaturemaps)

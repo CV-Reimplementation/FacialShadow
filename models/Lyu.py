@@ -74,7 +74,7 @@ class Lyu(nn.Module):
     We adapt Torch code and idea from Justin Johnson's neural style transfer project(https://github.com/jcjohnson/fast-neural-style)
     """
 
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
+    def __init__(self, input_nc=4, output_nc=3, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, padding_type='reflect'):
         """Construct a Resnet-based generator
 
         Parameters:
@@ -126,13 +126,14 @@ class Lyu(nn.Module):
 
         self.model = nn.Sequential(*model)
 
-    def forward(self, input):
+    def forward(self, input, mas):
         """Standard forward"""
-        return self.model(input)
+        return self.model(torch.cat((input, mas), dim=1))
 
 
 if __name__ == '__main__':
-    model = Lyu(3, 3)
+    model = Lyu()
     x = torch.randn(1, 3, 256, 256)
-    y = model(x)
+    m = torch.rand(1, 1, 256, 256)
+    y = model(x, m)
     print(y.shape)

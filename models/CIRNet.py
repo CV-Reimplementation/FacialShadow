@@ -172,7 +172,7 @@ class CIRNet(nn.Module):
         self.refine = DRNet(3 + 1472, 3, 256, 13, norm=None, res_scale=0.1,
                             se_reduction=8, bottom_kernel_size=1, pyramid=True)
 
-    def forward(self, x):
+    def forward(self, x, mas):
         hypercolumn = self.vgg(x)
         _, _, H, W = x.shape
         hypercolumn = [F.interpolate(feature.detach(), size=(H, W), mode='bilinear', align_corners=False) for feature in hypercolumn]

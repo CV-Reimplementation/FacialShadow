@@ -9,7 +9,7 @@ from torch.autograd import Function
 class ResNeXt101(nn.Module):
     def __init__(self):
         super(ResNeXt101, self).__init__()
-        net = models.resnext101_32x4d(weights='DEFAULT')
+        net = models.resnext101_32x8d(weights='DEFAULT')
         net = list(net.children())
         self.layer0 = nn.Sequential(
             *net[:3])                   # 200 * 200 * 64

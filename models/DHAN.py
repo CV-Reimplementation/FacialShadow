@@ -232,9 +232,9 @@ class DHAN(nn.Module):
     
     self.dropout = nn.Dropout(0.2)
     
-  def forward(self, x):
+  def forward(self, inp, mas):
     
-    out = self.fusion(self.backbone(x))
+    out = self.fusion(self.backbone(inp))
     
     ##Stage0
     out0_1 = self.block0_1(out)
@@ -284,7 +284,7 @@ class DHAN(nn.Module):
     
     alpha = torch.sigmoid(out_rgb[:,-1,:,:].unsqueeze(1))
     
-    out_rgb = x.mul(alpha).add(out_rgb[:,:-1, :, :].mul(1 - alpha)).clamp(0,1)
+    out_rgb = inp.mul(alpha).add(out_rgb[:,:-1, :, :].mul(1 - alpha)).clamp(0,1)
     return out_rgb
 
 

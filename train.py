@@ -75,10 +75,11 @@ def train():
             # get the inputs; data is a list of [target, input, filename]
             inp = data[0].contiguous()
             tar = data[1]
+            mas = mask_generator(inp, tar)
 
             # forward
             optimizer_b.zero_grad()
-            res = model(inp).clamp(0, 1)
+            res = model(inp, mas).clamp(0, 1)
 
             loss_psnr = criterion_psnr(res, tar)
             loss_ssim = 1 - structural_similarity_index_measure(res, tar, data_range=1)
@@ -101,9 +102,10 @@ def train():
                 # get the inputs; data is a list of [targets, inputs, filename]
                 inp = data[0].contiguous()
                 tar = data[1]
+                mas = mask_generator(inp, tar)
 
                 with torch.no_grad():
-                    res = model(inp).clamp(0, 1)
+                    res = model(inp, mas).clamp(0, 1)
 
                 res, tar = accelerator.gather((res, tar))
 
@@ -116,9 +118,10 @@ def train():
                 # get the inputs; data is a list of [targets, inputs, filename]
                 inp = data[0].contiguous()
                 tar = data[1]
+                mas = mask_generator(inp, tar)
 
                 with torch.no_grad():
-                    res = model(inp).clamp(0, 1)
+                    res = model(inp, mas).clamp(0, 1)
 
                 res, tar = accelerator.gather((res, tar))
 

@@ -642,7 +642,7 @@ class IFBlendUp(nn.Module):
 
 
 class IFBlend(nn.Module):
-    def __init__(self, in_channels, device="cuda", use_gcb=False, blend=False):
+    def __init__(self, in_channels, use_gcb=False, blend=False):
         super().__init__()
 
         self.in_channels = in_channels
@@ -687,7 +687,7 @@ class IFBlend(nn.Module):
         self.d1 = IFBlendUp(in_size=64, dwt_size=1, rgb_size=32,
                             out_size=in_channels, dropout=0.1)
 
-    def forward(self, x):
+    def forward(self, x, mas):
         x_rgb = x
         xf = self.in_bn(self.in_conv(x))
         x1, s1, xs1, rgb1 = self.c1(xf, x_rgb)

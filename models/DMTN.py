@@ -262,7 +262,7 @@ class DMTN(nn.Module):
         # Shadow feature decoupling module'
         self.FDM = FeatureDecouplingModule(in_channels=channels, channels=3)
 
-    def forward(self, x):
+    def forward(self, x, mas):
         size = (x.shape[2], x.shape[3])
 
         # vgg

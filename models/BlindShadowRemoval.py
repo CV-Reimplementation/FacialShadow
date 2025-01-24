@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.transforms.functional import rgb_to_grayscale
 
+
 class NonLocalBlock(nn.Module):
     def __init__(self, ch=32, out_ch=None, pool=False, norm='batch'):
         super(NonLocalBlock, self).__init__()
@@ -249,9 +250,9 @@ class BlindShadowRemoval(nn.Module):
             self.res_stack.append(ResBottleneck(
                 n_ch[3], ksize=3, stride=1, norm='batch'))
 
-    def forward(self, inputs):
+    def forward(self, inp, mas):
         # Header
-        x1 = self.conv1(inputs)
+        x1 = self.conv1(inp)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x = self.down3(x3)
@@ -266,7 +267,7 @@ class BlindShadowRemoval(nn.Module):
         y = self.up3(torch.cat([y, x2], dim=1))
         mask = torch.tanh(self.conv2(y))
         con = self.conv3(y)
-        gs = rgb_to_grayscale(inputs) * (1 + mask) + con
+        gs = rgb_to_grayscale(inp) * (1 + mask) + con
 
         # RGB
         for i in range(self.n_res // 2, self.n_res):

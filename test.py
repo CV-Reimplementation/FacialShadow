@@ -59,9 +59,10 @@ def test():
         # get the inputs; data is a list of [targets, inputs, filename]
         inp = test_data[0].contiguous()
         tar = test_data[1]
+        mas = mask_generator(inp, tar)
 
         with torch.no_grad():
-            res = model(inp).clamp(0, 1)
+            res = model(inp, mas).clamp(0, 1)
 
         save_image(res, os.path.join(opt.MODEL.SESSION, 'UCB', test_data[2][0]))
 
@@ -86,9 +87,10 @@ def test():
         # get the inputs; data is a list of [targets, inputs, filename]
         inp = test_data[0].contiguous()
         tar = test_data[1]
+        mas = mask_generator(inp, tar)
 
         with torch.no_grad():
-            res = model(inp).clamp(0, 1)
+            res = model(inp, mas).clamp(0, 1)
 
         save_image(res, os.path.join(opt.MODEL.SESSION, 'ASFW', test_data[2][0]))
 

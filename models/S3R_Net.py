@@ -39,7 +39,7 @@ class S3R_Net(nn.Module):
         self.model = nn.Sequential(*model)
         self.tanh = nn.Tanh()
 
-    def forward(self, x):
+    def forward(self, x, mas):
         res = self.model(x)
         sf_full = res + x if self.input_nc == 3 else res + x[:, :3, ...]
         sf_full = self.tanh(sf_full)

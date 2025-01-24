@@ -16,3 +16,8 @@ from .S3R_Net import S3R_Net
 from .Shadow_R import Shadow_R
 from .ST_CGAN import ST_CGAN
 from .MaskShadowGAN import MaskShadowGAN
+from .G2R_ShadowNet import G2R_ShadowNet
+from .Unfolding import Unfolding
+from .ShadowFormer import ShadowFormer
+from .DSC import DSC
+from .RASM import RASM

@@ -76,8 +76,8 @@ class DC_ShadowNet(nn.Module):
         self.FC = nn.Sequential(*FC)
         self.UpBlock2 = nn.Sequential(*UpBlock2)
 
-    def forward(self, input):
-        x = self.DownBlock(input)
+    def forward(self, inp, mas):
+        x = self.DownBlock(inp)
 
         gap = torch.nn.functional.adaptive_avg_pool2d(x, 1)
         gap_logit = self.gap_fc(gap.view(x.shape[0], -1))
@@ -104,7 +104,7 @@ class DC_ShadowNet(nn.Module):
 
         for i in range(self.n_blocks):
             x = getattr(self, 'UpBlock1_' + str(i+1))(x, gamma, beta)
-        out = (self.UpBlock2(x)+input).tanh()  # yeying: just learn a residual
+        out = (self.UpBlock2(x)+inp).tanh()  # yeying: just learn a residual
 
         return out
 

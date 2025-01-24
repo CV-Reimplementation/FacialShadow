@@ -272,18 +272,16 @@ class PSM(nn.Module):
             self.res_stack.append(ResBottleneck(
                 ch=n_ch[3], ksize=3, stride=1, norm='batch'))
 
-    def forward(self, inputs):
+    def forward(self, inp, mas):
         # Header
-        x1 = self.conv1(inputs)
+        x1 = self.conv1(inp)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x = self.down3(x3)
         b, c, h, w = x.shape
 
         # Information sharing
-        # mask = F.interpolate(mask, size=(h, w), mode='bilinear',
-        #                    align_corners=False)
-        # x = torch.cat([x, mask], dim=1)
+        
         for i in range(self.n_res):
             x = self.res_stack[i](x)
 
@@ -301,5 +299,5 @@ if __name__ == '__main__':
     gen = PSM()
     x = torch.randn(1, 3, 256, 256)
     mask = torch.randn(1, 1, 256, 256)
-    out = gen(x)
+    out = gen(x, mask)
     print(out.size())

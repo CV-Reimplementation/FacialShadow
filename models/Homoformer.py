@@ -1187,7 +1187,7 @@ class HomoFormer(nn.Module):
     def extra_repr(self) -> str:
         return f"embed_dim={self.embed_dim}, token_projection={self.token_projection}, token_mlp={self.mlp},win_size={self.win_size}"
 
-    def forward(self, x):
+    def forward(self, x, mas):
         # Input Projection
         H, W = (x.shape[2], x.shape[3])
         y = self.input_proj(x)

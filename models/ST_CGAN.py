@@ -131,7 +131,7 @@ class rl_convT(nn.Module):
 
 
 class ST_CGAN(nn.Module):
-    def __init__(self, in_ch=3, out_ch=3):
+    def __init__(self, in_ch=4, out_ch=3):
         super(ST_CGAN, self).__init__()
         self.inc = inconv(in_ch, 64)
         self.conv_1 = lrl_conv_bn(64, 128)
@@ -146,8 +146,8 @@ class ST_CGAN(nn.Module):
         self.conv_T10 = rl_convT_bn(256, 64)
         self.conv_T11 = rl_convT(128, out_ch)
 
-    def forward(self, input):
-        cv0 = self.inc(input)
+    def forward(self, inp, mas):
+        cv0 = self.inc(torch.cat((inp, mas), dim=1))
         cv1 = self.conv_1(cv0)
         cv2 = self.conv_2(cv1)
         cv3 = self.conv_3(cv2)
@@ -169,9 +169,10 @@ class ST_CGAN(nn.Module):
 
 
 if __name__ == '__main__':
-    x = torch.rand(1, 3, 256, 256).cuda()
-    model = ST_CGAN().cuda()
+    x = torch.rand(1, 3, 256, 256)
+    m = torch.rand(1, 1, 256, 256)
+    model = ST_CGAN()
     model.eval()
     with torch.no_grad():
-        res = model(x)
+        res = model(x, m)
         print(res.shape)
