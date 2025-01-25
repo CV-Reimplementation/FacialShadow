@@ -48,8 +48,8 @@ def mask_generator(shadow: torch.Tensor, shadow_free: torch.Tensor, grad: bool =
     diff = gray_shadow_free - gray_shadow
     
     # Implement Otsu's method in PyTorch
-    hist = torch.histc(diff, bins=256, min=diff.min(), max=diff.max())
-    bin_edges = torch.linspace(diff.min(), diff.max(), 257)
+    hist = torch.histc(diff, bins=256, min=diff.min(), max=diff.max()).to(shadow.device)
+    bin_edges = torch.linspace(diff.min(), diff.max(), 257).to(shadow.device)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
     # Calculate probabilities
