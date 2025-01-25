@@ -1884,8 +1884,8 @@ class DeepGCN(nn.Module):
 
         self.stem = Stem(out_dim=channels[0], act=act)
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, channels[0], 256 // 4, 384 // 4))
-        HW = 256 // 4 * 384 // 4
+            torch.zeros(1, channels[0], 256 // 4, 256 // 4))
+        HW = 256 // 4 * 256 // 4
 
         self.backbone = nn.ModuleList([])
         idx = 0
