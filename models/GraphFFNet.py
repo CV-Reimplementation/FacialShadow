@@ -843,7 +843,7 @@ class spatial_attn_layer(nn.Module):
     def __init__(self, kernel_size=5):
         super(spatial_attn_layer, self).__init__()
         self.compress = ChannelPool()
-        self.spatial = BasicConv(2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2, relu=False)
+        self.spatial = nn.Conv2d(2, 1, kernel_size, stride=1, padding=(kernel_size - 1) // 2)
 
     def forward(self, x):
         # import pdb;pdb.set_trace()
@@ -2384,7 +2384,8 @@ class UNet(nn.Module):
 
 if __name__ == '__main__':
     # Test model
-    model = GraphFFNet()
+    model = GraphFFNet().eval()
     x = torch.randn(1, 3, 256, 256)
-    y = model(x)
-    print(y.size())
+    with torch.no_grad():
+        y = model(x, x)
+        print(y.size())
