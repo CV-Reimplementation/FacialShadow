@@ -361,11 +361,11 @@ class irnn(torch.autograd.Function):
         output_reshaped = output_up.permute(0, 2, 3, 1).reshape(-1, channels)
         grad_reshaped = grad_output_up.permute(0, 2, 3, 1).reshape(-1, channels)
         
-        # Compute gradients for weights and biases
-        grad_weight_up = torch.sum(output_reshaped.t() @ grad_reshaped, dim=1)
-        grad_weight_right = torch.sum(output_right.reshape(-1, channels).t() @ grad_output_right.reshape(-1, channels), dim=1)
-        grad_weight_down = torch.sum(output_down.reshape(-1, channels).t() @ grad_output_down.reshape(-1, channels), dim=1)
-        grad_weight_left = torch.sum(output_left.reshape(-1, channels).t() @ grad_output_left.reshape(-1, channels), dim=1)
+        # Compute gradients for weights and biases, reshaping to match input shapes
+        grad_weight_up = torch.sum(output_reshaped.t() @ grad_reshaped, dim=1).view(channels, 1, 1, 1)
+        grad_weight_right = torch.sum(output_right.reshape(-1, channels).t() @ grad_output_right.reshape(-1, channels), dim=1).view(channels, 1, 1, 1)
+        grad_weight_down = torch.sum(output_down.reshape(-1, channels).t() @ grad_output_down.reshape(-1, channels), dim=1).view(channels, 1, 1, 1)
+        grad_weight_left = torch.sum(output_left.reshape(-1, channels).t() @ grad_output_left.reshape(-1, channels), dim=1).view(channels, 1, 1, 1)
         
         # Compute bias gradients
         grad_bias_up = grad_output_up.sum(dim=(0, 2, 3))
