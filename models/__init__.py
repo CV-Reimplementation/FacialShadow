@@ -22,3 +22,5 @@ from .ShadowFormer import ShadowFormer
 from .DSC import DSC
 from .RASM import RASM
 from .SADC import SADC
+from .PRNet import PRNet
+from .SG_ShadowNet import SG_ShadowNet
