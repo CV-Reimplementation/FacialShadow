@@ -310,10 +310,11 @@ class PRNet(nn.Module):
         self.update_block = BasicUpdateBlock(hidden_dim=hdim)
 
 
-    def forward(self, img_m, img, m):
+    def forward(self, img, m):
         """ Estimate optical flow between pair of frames """
         # hdim = self.hidden_dim
         # cdim = self.context_dim
+        img_m = torch.cat([img, m], dim=1)
 
         # run the feature network
         proc_img = img
