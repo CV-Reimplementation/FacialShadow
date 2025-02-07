@@ -1,0 +1,529 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numbers
+import numpy as np
+from einops import rearrange
+
+
+def window_partition(x, window_size: int, h, w):
+    """
+    Args:
+        x: (B, H, W, C)
+        window_size (int): window size(M)
+
+    Returns:
+        windows: (num_windows*B, window_size, window_size, C)
+    """
+    pad_l = pad_t = 0
+    pad_r = (window_size - w % window_size) % window_size
+    pad_b = (window_size - h % window_size) % window_size
+    x = F.pad(x, [pad_l, pad_r, pad_t, pad_b])
+    B, C, H, W = x.shape
+    x = x.view(B, C, H // window_size, window_size,
+               W // window_size, window_size)
+    windows = x.permute(0, 1, 2, 4, 3, 5).contiguous(
+    ).view(-1, C, window_size, window_size)
+    return windows
+
+
+def window_reverse(windows, window_size: int, H: int, W: int):
+    """
+    Args:
+        windows: (num_windows*B, window_size, window_size, C)
+        window_size (int): Window size(M)
+        H (int): Height of image
+        W (int): Width of image
+
+    Returns:
+        x: (B, H, W, C)
+    """
+    pad_l = pad_t = 0
+    pad_r = (window_size - W % window_size) % window_size
+    pad_b = (window_size - H % window_size) % window_size
+    H = H+pad_b
+    W = W+pad_r
+    B = int(windows.shape[0] / (H * W / window_size / window_size))
+    x = windows.view(B, -1, H // window_size, W //
+                     window_size, window_size, window_size)
+    x = x.permute(0, 1, 2, 4, 3, 5).contiguous().view(B, -1, H, W)
+    windows = F.pad(x, [pad_l, -pad_r, pad_t, -pad_b])
+    return windows
+
+
+def to_3d(x):
+    return rearrange(x, 'b c h w -> b (h w) c')
+
+
+def to_4d(x, h, w):
+    return rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
+
+
+class BiasFree_LayerNorm(nn.Module):
+    def __init__(self, normalized_shape):
+        super(BiasFree_LayerNorm, self).__init__()
+        if isinstance(normalized_shape, numbers.Integral):
+            normalized_shape = (normalized_shape,)
+        normalized_shape = torch.Size(normalized_shape)
+
+        assert len(normalized_shape) == 1
+
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
+        self.normalized_shape = normalized_shape
+
+    def forward(self, x):
+        sigma = x.var(-1, keepdim=True, unbiased=False)
+        return x / torch.sqrt(sigma+1e-5) * self.weight
+
+
+class WithBias_LayerNorm(nn.Module):
+    def __init__(self, normalized_shape):
+        super(WithBias_LayerNorm, self).__init__()
+        if isinstance(normalized_shape, numbers.Integral):
+            normalized_shape = (normalized_shape,)
+        normalized_shape = torch.Size(normalized_shape)
+
+        assert len(normalized_shape) == 1
+
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
+        self.bias = nn.Parameter(torch.zeros(normalized_shape))
+        self.normalized_shape = normalized_shape
+
+    def forward(self, x):
+        mu = x.mean(-1, keepdim=True)
+        sigma = x.var(-1, keepdim=True, unbiased=False)
+        return (x - mu) / torch.sqrt(sigma+1e-5) * self.weight + self.bias
+
+
+class LayerNorm(nn.Module):
+    def __init__(self, dim, LayerNorm_type='WithBias'):
+        super(LayerNorm, self).__init__()
+        if LayerNorm_type == 'BiasFree':
+            self.body = BiasFree_LayerNorm(dim)
+        else:
+            self.body = WithBias_LayerNorm(dim)
+
+    def forward(self, x):
+        h, w = x.shape[-2:]
+        return to_4d(self.body(to_3d(x)), h, w)
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, bias):
+        super(FeedForward, self).__init__()
+
+        hidden_features = int(dim*3)
+
+        self.project_in = nn.Conv2d(dim, hidden_features*2, kernel_size=1, bias=bias)
+
+        self.dwconv = nn.Conv2d(hidden_features*2, hidden_features*2, kernel_size=3, stride=1, padding=1, groups=hidden_features*2, bias=bias)
+
+        self.project_out = nn.Conv2d(hidden_features, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x):
+        x = self.project_in(x)
+        x1, x2 = self.dwconv(x).chunk(2, dim=1)
+        x = F.relu(x1) * x2
+        x = self.project_out(x)
+        return x
+
+
+class SWPSA(nn.Module):
+    def __init__(self, dim, window_size, shift_size, bias):
+        super(SWPSA, self).__init__()
+        self.window_size = window_size
+        self.shift_size = shift_size
+
+        self.qkv_conv = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
+        self.qkv_dwconv = nn.Conv2d(dim * 3, dim * 3, kernel_size=3, stride=1, padding=1,groups=dim * 3, bias=bias)
+
+        self.project_out = nn.Conv2d(dim, dim, kernel_size=3, padding=1,bias=bias)
+        self.project_out1 = nn.Conv2d(dim, dim, kernel_size=3, padding=1,bias=bias)
+
+        self.qkv_conv1 = nn.Conv2d(dim, dim * 3, kernel_size=1, bias=bias)
+        self.qkv_dwconv1 = nn.Conv2d(dim * 3, dim * 3, kernel_size=3, stride=1, padding=1,groups=dim * 3, bias=bias)
+
+    def window_partitions(self,x, window_size: int):
+        """
+        Args:
+            x: (B, H, W, C)
+            window_size (int): window size(M)
+
+        Returns:
+            windows: (num_windows*B, window_size, window_size, C)
+        """
+        B, H, W, C = x.shape
+        x = x.view(B, H // window_size, window_size, W // window_size, window_size, C)
+        windows = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, window_size, window_size, C)
+        return windows
+
+    def create_mask(self, x):
+
+        n,c,H,W = x.shape
+        Hp = int(np.ceil(H / self.window_size)) * self.window_size
+        Wp = int(np.ceil(W / self.window_size)) * self.window_size
+        img_mask = torch.zeros((1, Hp, Wp, 1), device=x.device)  # [1, Hp, Wp, 1]
+        h_slices = (slice(0, -self.window_size),
+                    slice(-self.window_size, -self.shift_size),
+                    slice(-self.shift_size, None))
+        w_slices = (slice(0, -self.window_size),
+                    slice(-self.window_size, -self.shift_size),
+                    slice(-self.shift_size, None))
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = self.window_partitions(img_mask, self.window_size)  # [nW, Mh, Mw, 1]
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)  # [nW, Mh*Mw]
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)  # [nW, 1, Mh*Mw] - [nW, Mh*Mw, 1]
+        # [nW, Mh*Mw, Mh*Mw]
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+        return attn_mask
+
+    def forward(self, x):
+        shortcut = x
+        b, c, h, w = x.shape
+
+        x = window_partition(x,self.window_size,h,w)
+
+        qkv = self.qkv_dwconv(self.qkv_conv(x))
+        q, k, v = qkv.chunk(3, dim=1)
+
+        q = rearrange(q, 'b c h w -> b c (h w)')
+        k = rearrange(k, 'b c h w -> b c (h w)')
+        v = rearrange(v, 'b c h w -> b c (h w)')
+
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+        attn = (q.transpose(-2,-1) @ k)/self.window_size
+        attn = attn.softmax(dim=-1)
+        out = (v @ attn )
+        out = rearrange(out, 'b c (h w) -> b c h w', h=int(self.window_size),
+                        w=int(self.window_size))
+        out = self.project_out(out)
+        out = window_reverse(out,self.window_size,h,w)
+
+        shift = torch.roll(out,shifts=(-self.shift_size,-self.shift_size),dims=(2,3))
+        shift_window = window_partition(shift,self.window_size,h,w)
+        qkv = self.qkv_dwconv1(self.qkv_conv1(shift_window))
+        q, k,v  = qkv.chunk(3, dim=1)
+        q = rearrange(q, 'b c h w -> b c (h w)')
+        k = rearrange(k, 'b c h w -> b c (h w)')
+        v = rearrange(v, 'b c h w -> b c (h w)')
+
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+
+        attn = (q.transpose(-2,-1) @ k)/self.window_size
+        mask = self.create_mask(shortcut)
+        attn = attn.view(b,-1,self.window_size*self.window_size,self.window_size*self.window_size) + mask.unsqueeze(0)
+        attn = attn.view(-1,self.window_size*self.window_size,self.window_size*self.window_size)
+        attn = attn.softmax(dim=-1)
+
+        out = (v @ attn)
+
+        out = rearrange(out, 'b c (h w) -> b c h w', h=int(self.window_size),
+                        w=int(self.window_size))
+
+        out = self.project_out1(out)
+        out = window_reverse(out,self.window_size,h,w)
+        out = torch.roll(out,shifts=(self.shift_size,self.shift_size),dims=(2,3))
+
+        return out
+
+
+class SWPSATransformerBlock(nn.Module):
+    def __init__(self, dim, window_size=8, shift_size=3, bias=False):
+        super(SWPSATransformerBlock, self).__init__()
+        self.norm1 = LayerNorm(dim)
+        self.attn = SWPSA(dim, window_size, shift_size, bias)
+        self.norm2 = LayerNorm(dim)
+        self.ffn = FeedForward(dim,bias)
+
+    def forward(self, x):
+        y = self.attn(self.norm1(x))
+        diffY = x.size()[2] - y.size()[2]
+        diffX = x.size()[3] - y.size()[3]
+
+        y = F.pad(y, [diffX // 2, diffX - diffX // 2, diffY // 2, diffY - diffY // 2])
+        x = x + y
+        x = x + self.ffn(self.norm2(x))
+
+        return x
+    
+
+class ResidualBlock(nn.Module):
+    """残差块，用于细节增强"""
+    def __init__(self, in_channels):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, 3, padding=1),
+            LayerNorm(in_channels),
+            nn.Mish(inplace=True),
+            nn.Conv2d(in_channels, in_channels, 3, padding=1),
+            LayerNorm(in_channels)
+        )
+    
+    def forward(self, x):
+        return x + self.conv(x)
+    
+
+class MSGNet(nn.Module):
+    """多尺度梯度网络"""
+
+    def __init__(self):
+        super().__init__()
+        self.down1 = nn.Conv2d(3, 32, 3, padding=1)  # 1/2
+        self.down2 = nn.Conv2d(32, 64, 3, padding=1)  # 1/4
+
+        self.res_blocks = nn.Sequential(
+            ResidualBlock(64),
+            ResidualBlock(64)
+        )
+
+        self.up1 = nn.Conv2d(64, 32, 3, padding=1)
+        self.up2 = nn.Conv2d(32, 3, 3, padding=1)
+
+    def forward(self, x):
+        x = F.relu(self.down1(x))
+        x = F.relu(self.down2(x))
+        x = self.res_blocks(x)
+        x = F.relu(self.up1(x))
+        return torch.sigmoid(self.up2(x))
+
+
+class CoarseGenerator(nn.Module):
+    """带Swin-Transformer的U-Net生成器"""
+    def __init__(self):
+        super().__init__()
+        # Encoder
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(4, 64, 4, 2, 1),  # 224 -> 112
+            nn.Mish(inplace=True)
+        )
+        self.enc2 = self._downblock(64, 128)  # 112 -> 56
+        self.enc3 = self._downblock(128, 256)  # 56 -> 28
+        
+        # Swin-Transformer Bottleneck
+        self.swin1 = SWPSATransformerBlock(256)
+        self.swin2 = SWPSATransformerBlock(256)
+        
+        self.feat_norm = LayerNorm(256)  # 只对通道维度做归一化
+        
+        # Decoder
+        self.dec1 = self._upblock(256, 128)
+        self.dec2 = self._upblock(128 * 2, 64)
+        self.final = nn.Sequential(
+            nn.Conv2d(64 * 2, 64, 3, padding=1),
+            nn.Mish(inplace=True),
+            nn.Conv2d(64, 3, 3, padding=1),
+            nn.Mish(inplace=True),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        )
+    
+    def _downblock(self, in_c, out_c):
+        return nn.Sequential(
+            nn.Conv2d(in_c, out_c, 3, padding=1),
+            LayerNorm(out_c),
+            nn.Mish(inplace=True),
+        )
+    
+    def _upblock(self, in_c, out_c):
+        return nn.Sequential(
+            nn.Conv2d(in_c, out_c, 3, padding=1),
+            LayerNorm(out_c),
+            nn.Mish(inplace=True),
+        )
+    
+    def forward(self, x, mask):
+        # 输入拼接阴影掩膜
+        x = torch.cat([x, mask], dim=1)
+        
+        # Encoder
+        e1 = self.enc1(x)    # [B, 64, 112, 112]
+        e2 = self.enc2(e1)   # [B, 128, 56, 56]
+        e3 = self.enc3(e2)   # [B, 256, 28, 28]
+        
+        b = self.feat_norm(e3)
+        
+        # Swin-Transformer
+        b = self.swin1(b)
+        b = self.swin2(b)
+        
+        # Decoder
+        d1 = self.dec1(b)
+        d1 = torch.cat([d1, e2], dim=1)
+        d2 = self.dec2(d1)   # [B, 64, 112, 112]
+        d2 = torch.cat([d2, e1], dim=1)
+        return self.final(d2)
+    
+
+class IlluminationCorrector(nn.Module):
+    """可学习非线性光照校正"""
+    def __init__(self):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(3, 128),
+            nn.GELU(),
+            nn.Linear(128, 6)  # 输出3通道的scale和bias
+        )
+    
+    def forward(self, x, params):
+        # params: [B, 3]
+        affines = self.mlp(params)  # [B, 6]
+        scale = affines[:, :3].view(-1, 3, 1, 1)
+        bias = affines[:, 3:].view(-1, 3, 1, 1)
+        return x * (1 + scale) + bias  # 保持原始光照的残差形式
+    
+
+class RefinementModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # 初始特征提取
+        self.conv1 = nn.Conv2d(3, 64, 3, padding=1)
+
+        # 修改下采样层，因为输入是224x224
+        self.downsample = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),  # 224 -> 112
+            nn.Mish(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),  # 112 -> 56
+            nn.Mish(inplace=True),
+            LayerNorm(64)
+        )
+
+        # 第一个Swin block (56x56)
+        self.norm1 = LayerNorm(64)  # 匹配 [B, 56, 56, 64] 的输入
+        self.swin1 = SWPSATransformerBlock(64)
+
+        # 下采样到28x28
+        self.downsample2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),  # 56 -> 28
+            nn.Mish(inplace=True),
+            LayerNorm(128)
+        )
+
+        # 第二个Swin block (28x28)
+        self.norm2 = LayerNorm(128)  # 匹配 [B, 28, 28, 128] 的输入
+        self.swin2 = SWPSATransformerBlock(128)
+
+        # 上采样回原始分辨率
+        self.upsample = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),  # 28 -> 56
+            nn.Mish(inplace=True),
+            LayerNorm(64),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),  # 56 -> 112
+            nn.Mish(inplace=True),
+            LayerNorm(64),
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 112 -> 224
+            nn.Mish(inplace=True),
+            LayerNorm(32)
+        )
+
+        self.final_conv = nn.Conv2d(32, 3, kernel_size=3, padding=1)
+        self.illum_corrector = IlluminationCorrector()
+        self.msg_net = MSGNet()
+
+    def forward(self, coarse_img):
+
+        # 初始特征提取
+        x = self.conv1(coarse_img)
+
+        # 下采样到56x56
+        x = self.downsample(x)
+
+        # 第一个Swin block
+        b = self.norm1(x)
+        b = self.swin1(b)
+
+        # 下采样到28x28
+        x = self.downsample2(b)  # [B, 128, 28, 28]
+
+        # 第二个Swin block
+        b = self.norm2(x)
+        b = self.swin2(b)
+
+        # 特征聚合
+        global_feat = F.adaptive_avg_pool2d(b, (1, 1)).squeeze(-1).squeeze(-1)
+
+        # 上采样和最终处理
+        x = self.upsample(b)  # [B, 32, 224, 224]
+        x = self.final_conv(x)  # [B, 3, 224, 224]
+
+        # 光照校正和细节增强
+        corrected = self.illum_corrector(coarse_img, global_feat[:, :3])
+        detail = self.msg_net(coarse_img)
+
+        return corrected + detail + x
+
+
+class CSC_Block(nn.Module):
+    def __init__(self, dim) -> None:
+        super().__init__()
+
+        ker = 31
+        pad = ker // 2
+        self.in_conv = nn.Sequential(
+                    nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1),
+                    nn.Mish(inplace=True),
+                    )
+        self.out_conv = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1)
+        # Horizontal Strip Convolution
+        self.dw_13 = nn.Conv2d(dim, dim, kernel_size=(1, ker), padding=(0 , pad), stride=1, groups=dim)
+        # Vertical Strip Convolution
+        self.dw_31 = nn.Conv2d(dim, dim, kernel_size=(ker,1), padding=(pad , 0), stride=1, groups=dim)
+        # Square Kernel Convolution
+        self.dw_33 = nn.Conv2d(dim, dim, kernel_size=ker, padding=pad, stride=1, groups=dim)
+        self.dw_11 = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1, groups=dim)
+
+        self.act = nn.Mish(inplace=True)
+
+    def forward(self, x):
+        out = self.in_conv(x)
+        out = x + self.dw_13(out) + self.dw_31(out) + self.dw_33(out) + self.dw_11(out)
+        out = self.act(out)
+        return self.out_conv(out)
+    
+
+class Model(nn.Module):
+    """完整的阴影去除网络"""
+    def __init__(self):
+        super().__init__()
+        # 阴影掩码预测
+        self.mask_predictor = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.Mish(inplace=True),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.Mish(inplace=True),
+            CSC_Block(64),
+            nn.Conv2d(64, 32, 3, padding=1),
+            nn.Mish(inplace=True),
+            nn.Conv2d(32, 1, 3, padding=1),
+            nn.Sigmoid()
+        )
+        
+        # 粗糙生成器
+        self.coarse = CoarseGenerator()
+        # 精修模块
+        self.refinement = RefinementModule()
+    
+    def forward(self, x, mask=None):
+        
+        # 预测阴影掩码
+        shadow_mask = self.mask_predictor(x)
+        
+        # 粗糙去除
+        coarse = self.coarse(x, shadow_mask)
+        
+        # 精修
+        refined = self.refinement(coarse)
+        return refined
+    
+
+if __name__ == '__main__':
+    model = Model().cuda().eval()
+    x = torch.randn(1, 3, 512, 512).cuda()
+    with torch.no_grad():
+        out = model(x)
+        print(f"Output shape: {out.shape}")
