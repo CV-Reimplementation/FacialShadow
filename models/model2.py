@@ -86,29 +86,29 @@ class FaceShadowRemoval(nn.Module):
         return enhanced_image
 
 # Define Loss Functions
-l1_loss = nn.L1Loss()
-gan_loss = nn.BCELoss()
+# l1_loss = nn.L1Loss()
+# gan_loss = nn.BCELoss()
 
 
 
-# 设置设备
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# # 设置设备
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 载入模型
-model = FaceShadowRemoval().to(device)
-model.eval()  # 设置为测试模式
+# # 载入模型
+# model = FaceShadowRemoval().to(device)
+# model.eval()  # 设置为测试模式
 
-# 创建随机测试输入（模拟一张3通道RGB的脸部图像）
-test_image = torch.rand(2, 3, 224, 224).to(device)  # batch_size=1, 3通道, 224x224
+# # 创建随机测试输入（模拟一张3通道RGB的脸部图像）
+# test_image = torch.rand(2, 3, 224, 224).to(device)  # batch_size=1, 3通道, 224x224
 
-# 运行模型
-with torch.no_grad():
-    output_image = model(test_image)
+# # 运行模型
+# with torch.no_grad():
+#     output_image = model(test_image)
 
-# 确保输出尺寸正确
-assert output_image.shape == test_image.shape, f"Output shape {output_image.shape} does not match input {test_image.shape}"
+# # 确保输出尺寸正确
+# assert output_image.shape == test_image.shape, f"Output shape {output_image.shape} does not match input {test_image.shape}"
 
-# 计算 L1 loss 进行简单检查
-l1_loss = torch.nn.L1Loss()
-loss = l1_loss(output_image, test_image)
-print(f"Test Passed! L1 Loss: {loss.item():.4f}")
+# # 计算 L1 loss 进行简单检查
+# l1_loss = torch.nn.L1Loss()
+# loss = l1_loss(output_image, test_image)
+# print(f"Test Passed! L1 Loss: {loss.item():.4f}")
