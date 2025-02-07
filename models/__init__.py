@@ -24,5 +24,4 @@ from .RASM import RASM
 from .SADC import SADC
 from .PRNet import PRNet
 from .SG_ShadowNet import SG_ShadowNet
-from .model1 import SwinIllumGAN
-from .model2 import FaceShadowRemoval
+from .model import Model
