@@ -377,9 +377,9 @@ class SADC(nn.Module):
     
 
 if __name__ == '__main__':
-    model = SADC().eval()
-    x = torch.rand(1, 3, 512, 512)
-    mask = torch.rand(1, 1, 512, 512)
+    model = SADC().cuda().eval()
+    x = torch.rand(1, 3, 256, 256).cuda()
+    mask = torch.rand(1, 1, 256, 256).cuda()
     with torch.no_grad():
         out = model(x, mask)
         print(out.size())

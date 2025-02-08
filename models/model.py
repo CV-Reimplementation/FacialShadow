@@ -4,7 +4,231 @@ import torch.nn.functional as F
 import numbers
 import numpy as np
 from einops import rearrange
+import kornia
 
+
+def conv(X, W, s):
+    x1_use = X[:,:,s,:,:]
+    x1_out = torch.einsum('ncskj,dckj->nds',x1_use,W)
+    return x1_out
+
+
+class ConvLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, dilation = 1, bias = True, groups = 1):
+        super(ConvLayer, self).__init__()
+        reflection_padding = (kernel_size + (dilation - 1)*(kernel_size - 1))//2
+        self.reflection_pad = nn.ReflectionPad2d(reflection_padding)
+        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, groups = groups, bias = bias, dilation = dilation)
+        
+        self.normalization = LayerNorm(out_channels)
+        self.activation = nn.GELU()
+          
+    def forward(self, x): 
+        out = self.conv2d(self.reflection_pad(x))
+        if self.normalization is not None:
+            out = self.normalization(out)
+        if self.activation is not None:
+            out = self.activation(out)
+        
+        return out
+    
+
+class DynConvLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, dilation = 1, bias = True):
+        super(DynConvLayer, self).__init__()
+        reflection_padding = (kernel_size + (dilation - 1)*(kernel_size - 1))//2
+        self.reflection_pad = nn.ReflectionPad2d(reflection_padding)
+        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, bias = bias, dilation = dilation)
+        self.augment_conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, bias = bias, dilation = dilation)
+        self.light_conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, groups=in_channels, bias = bias, dilation = dilation)
+        self.dilation = dilation
+        self.groups = in_channels
+
+        self.normalization = None
+        self.augment_normalization = None
+          
+        self.activation = nn.GELU()
+
+    def forward(self, x, mask):
+
+        mask_d = kornia.morphology.dilation(mask, torch.ones(self.dilation * 2 + 1, self.dilation * 2 + 1).to(x.device))
+        mask_e = kornia.morphology.erosion(mask, torch.ones(self.dilation * 2 + 1, self.dilation * 2 + 1).to(x.device))
+
+        if self.training:
+            out_shadow = self.conv2d(self.reflection_pad(x))
+            if self.normalization is not None:
+                out_shadow = self.normalization(out_shadow)
+            if self.activation is not None:
+                out_shadow = self.activation(out_shadow)
+
+            out_shadow = self.augment_conv2d(self.reflection_pad(out_shadow))
+            if self.normalization is not None:
+                out_shadow = self.normalization(out_shadow)
+            if self.activation is not None:
+                out_shadow = self.activation(out_shadow)
+
+            # Unshadow region color mapping
+            out_unshadow = self.light_conv2d(self.reflection_pad(x))
+            if self.normalization is not None:
+                out_unshadow = self.normalization(out_unshadow)
+            if self.activation is not None:
+                out_unshadow = self.activation(out_unshadow)
+
+            for i, out_s in enumerate(out_shadow):
+                if i == 0:
+                    if mask[i].sum() <= 100 or mask[i].sum() > 0.99 * mask[i].numel():
+                        out_shadow_mean = out_shadow[i].mean(dim=(1, 2)).unsqueeze(0)
+                        out_unshadow_mean = out_unshadow[i].mean(dim=(1, 2)).unsqueeze(0)
+                        continue
+                    out_shadow_mean = out_shadow[i][(mask[i] - mask_e[i]).expand_as(x[i]) == 1].reshape(
+                        (x.shape[1], -1)).mean(-1).unsqueeze(0)
+                    out_unshadow_mean = out_unshadow[i][(mask_d[i] - mask[i]).expand_as(x[i]) == 1].reshape(
+                        (x.shape[1], -1)).mean(-1).unsqueeze(0)
+                else:
+                    if mask[i].sum() <= 100 or mask[i].sum() > 0.99 * mask[i].numel():
+                        out_shadow_mean = torch.cat((out_shadow_mean, out_shadow[i].mean(dim=(1, 2)).unsqueeze(0)),
+                                                    dim=0)
+                        out_unshadow_mean = torch.cat(
+                            (out_unshadow_mean, out_unshadow[i].mean(dim=(1, 2)).unsqueeze(0)), dim=0)
+                        continue
+                    out_shadow_mean = torch.cat((out_shadow_mean,
+                                                 out_shadow[i][(mask[i] - mask_e[i]).expand_as(x[i]) == 1].reshape(
+                                                     (x.shape[1], -1)).mean(dim=-1).unsqueeze(0)), dim=0)
+                    out_unshadow_mean = torch.cat((out_unshadow_mean,
+                                                   out_unshadow[i][(mask_d[i] - mask[i]).expand_as(x[i]) == 1].reshape(
+                                                       (x.shape[1], -1)).mean(-1).unsqueeze(0)), dim=0)
+            return mask * (out_shadow + x) + (1 - mask) * (out_unshadow + x), out_shadow_mean, out_unshadow_mean
+
+        else:
+            #T1 = time.time()
+            shape = x.shape
+            Bx,Cx,Hx,Wx = x.shape
+            dilation = self.dilation
+
+            mask_d1 = kornia.morphology.dilation(mask, torch.ones(self.dilation * 2 + 1, self.dilation * 2 + 1).to(x.device))
+
+            md = torch.flatten(mask_d1).bool()
+            sd = torch.flatten(mask).bool()
+
+            x_ori = x.clone()
+
+            w_conv_1 = self.conv2d.weight
+            FN, C, ksize1, ksize, = w_conv_1.shape
+            x1 = self.reflection_pad(x_ori)
+            x_k = torch.nn.functional.unfold(x1, ksize, dilation=dilation, stride=1) #N*(Ckk)*(hw)
+            x_k_k = x_k.reshape(x_k.shape[0],Cx,ksize,ksize,x_k.shape[2]).permute(0,1,4,2,3) #N*C*(hw)*k*k
+            out_shadow_conv = conv(x_k_k,w_conv_1,md)+self.conv2d.bias.unsqueeze(0).unsqueeze(-1) #N*C*num(mask)
+
+            if self.normalization is not None:
+                out_shadow_conv = self.normalization(out_shadow_conv)
+            if self.activation is not None:
+                out_shadow_conv = self.activation(out_shadow_conv)
+
+
+            x_ori = x_ori.reshape(x_ori.shape[0],x_ori.shape[1],-1)
+            x_ori[:, :, md] = out_shadow_conv
+            x_ori = x_ori.reshape(shape)
+
+            x1 = self.reflection_pad(x_ori)
+            x_k = F.unfold(x1, ksize, dilation=dilation, stride=1)
+            x_k_k = x_k.reshape(x_k.shape[0], Cx, ksize, ksize, x_k.shape[2]).permute(0, 1, 4, 2, 3)
+            w_conv_2 = self.augment_conv2d.weight
+            out_shadow_conv = conv(x_k_k, w_conv_2, sd) + self.augment_conv2d.bias.unsqueeze(0).unsqueeze(-1)
+
+            if self.normalization is not None:
+                out_shadow_conv = self.normalization(out_shadow_conv)
+            if self.activation is not None:
+                out_shadow_conv = self.activation(out_shadow_conv)
+
+            ns = ~sd
+            x1 = self.reflection_pad(x)
+            x_k = F.unfold(x1, ksize, dilation=dilation, stride=1)  # N*(Ckk)*(hw)
+            x_k_k = x_k.reshape(x_k.shape[0], Cx, ksize, ksize, x_k.shape[2]).permute(0, 1, 4, 2, 3)  # N*C*(hw)*k*k
+            x_k_k = x_k_k.reshape(x_k_k.shape[0], self.groups, -1, x_k_k.shape[2], x_k_k.shape[3],x_k_k.shape[4])  # N*g*(C/g)*(hw)*k*k
+            w_conv_3 = self.light_conv2d.weight
+            d, c_g, k, j = w_conv_3.shape
+            w_conv_3_1 = w_conv_3.reshape(self.groups, -1, c_g, k, j)  # g*(d/g)*c_g*k*k
+            x1_use = x_k_k[:, :, :, ns, :, :]
+            x1_out = torch.einsum('ngcskj,gdckj->ngds', x1_use, w_conv_3_1)
+            x1_out_1 = x1_out.reshape(x1_out.shape[0], d, x1_out.shape[3])
+            out_unshadow_conv = x1_out_1 + self.light_conv2d.bias.unsqueeze(0).unsqueeze(-1)
+
+            if self.normalization is not None:
+                out_unshadow_conv = self.normalization(out_unshadow_conv)
+            if self.activation is not None:
+                out_unshadow_conv = self.activation(out_unshadow_conv)
+
+            x_ori = x_ori.reshape(x_ori.shape[0],x_ori.shape[1],-1)
+            x_ori[:, :, sd] = out_shadow_conv
+            x_ori[:, :, ns] = out_unshadow_conv
+            x_ori = x_ori.reshape(shape)
+
+            x = x_ori + x
+            #T2 = time.time()
+            #print('runtime:%s ms' % ((T2 - T1) * 1000))
+
+            return x
+        
+
+class Self_Attention(nn.Module):
+    def __init__(self, channels, k):
+      super(Self_Attention, self).__init__()
+      self.channels = channels
+      self.k = k
+      
+      self.linear1 = nn.Linear(channels, channels//k)
+      self.linear2 = nn.Linear(channels//k, channels)
+      self.global_pooling = nn.AdaptiveAvgPool2d((1,1))
+      
+      self.activation = nn.GELU()
+      
+    def attention(self, x):
+      N, C, H, W = x.size()
+      out = torch.flatten(self.global_pooling(x), 1)
+      out = self.activation(self.linear1(out))
+      out = torch.sigmoid(self.linear2(out)).view(N, C, 1, 1)
+      
+      return out.mul(x)
+      
+    def forward(self, x):
+      return self.attention(x)
+    
+
+class Aggreation(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(Aggreation, self).__init__()
+        self.attention = Self_Attention(in_channels, k = 8)
+        self.conv = ConvLayer(in_channels, out_channels, kernel_size=3, stride=1, dilation = 1)
+      
+    def forward(self, x):
+        return self.conv(self.attention(x))
+    
+
+class AggBlock(nn.Module):
+    def __init__(self, channels, ks1, ks2, dilation1, dilation2, mode=2):
+        super(AggBlock, self).__init__()
+        self.mode = mode
+        self.block1 = DynConvLayer(in_channels=channels, out_channels=channels,
+                                    kernel_size=ks1, stride=1, dilation=dilation1)
+        self.block2 = DynConvLayer(in_channels=channels, out_channels=channels,
+                                    kernel_size=ks2, stride=1, dilation=dilation2)
+
+        self.aggreation0_rgb = Aggreation(
+            in_channels=channels*self.mode, out_channels=channels)
+      
+    def forward(self, x, mask, prev_x=None):
+        out_1 = self.block1(x, mask)
+        out_2 = self.block2(out_1, mask)
+
+        if self.mode == 2:
+            out = self.aggreation0_rgb(torch.cat((out_1, out_2), dim = 1))
+        elif self.mode == 3:
+            out = self.aggreation0_rgb(torch.cat((x, out_1, out_2), dim = 1))
+        else:
+            out = self.aggreation0_rgb(torch.cat((x, out_1, out_2, prev_x), dim = 1))
+
+        return out
+    
 
 def window_partition(x, window_size: int, h, w):
     """
@@ -300,27 +524,30 @@ class CoarseGenerator(nn.Module):
         super().__init__()
         # Encoder
         self.enc1 = nn.Sequential(
-            nn.Conv2d(4, 64, 4, 2, 1),  # 224 -> 112
+            nn.Conv2d(4, 16, 3, 1, 1),  # 224 -> 112
             nn.GELU()
         )
-        self.enc2 = self._downblock(64, 128)  # 112 -> 56
-        self.enc3 = self._downblock(128, 256)  # 56 -> 28
+        self.enc2 = self._downblock(16, 32)  # 112 -> 56
+        self.enc3 = self._downblock(32, 64)  # 56 -> 28
+
+        self.feat_norm = LayerNorm(64)  # 只对通道维度做归一化
         
-        # Swin-Transformer Bottleneck
-        self.swin1 = CSC_Block(256)
-        self.swin2 = CSC_Block(256)
-        
-        self.feat_norm = LayerNorm(256)  # 只对通道维度做归一化
+        # D-DHAN
+        self.block1 = AggBlock(64, ks1=1, ks2=3, dilation1=1,
+                            dilation2=1, mode=2)
+        self.block2 = AggBlock(64, ks1=3, ks2=3, dilation1=2,
+                            dilation2=4, mode=3)
+        self.block3 = AggBlock(64, ks1=3, ks2=3, dilation1=8,
+                            dilation2=16, mode=3)
+        self.block4 = AggBlock(64, ks1=3, ks2=3, dilation1=32,
+                            dilation2=64, mode=4)
         
         # Decoder
-        self.dec1 = self._upblock(256, 128)
-        self.dec2 = self._upblock(128 * 2, 64)
+        self.dec1 = self._upblock(64, 32)
+        self.dec2 = self._upblock(32, 16)
         self.final = nn.Sequential(
-            nn.Conv2d(64 * 2, 64, 3, padding=1),
-            nn.GELU(),
-            nn.Conv2d(64, 3, 3, padding=1),
-            nn.GELU(),
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            nn.Conv2d(16, 3, 3, padding=1),
+            nn.GELU()
         )
     
     def _downblock(self, in_c, out_c):
@@ -348,15 +575,14 @@ class CoarseGenerator(nn.Module):
         
         b = self.feat_norm(e3)
         
-        # Swin-Transformer
-        b = self.swin1(b)
-        b = self.swin2(b)
+        b0 = self.block1(b, mask)
+        b1 = self.block2(b0, mask)
+        b2 = self.block3(b1, mask)
+        b3 = self.block4(b2, mask, b1)
         
         # Decoder
-        d1 = self.dec1(b)
-        d1 = torch.cat([d1, e2], dim=1)
-        d2 = self.dec2(d1)   # [B, 64, 112, 112]
-        d2 = torch.cat([d2, e1], dim=1)
+        d1 = self.dec1(b3)
+        d2 = self.dec2(d1)
         return self.final(d2)
     
 
@@ -522,32 +748,32 @@ class RefinementModule(nn.Module):
         return corrected + detail + x
 
 
-class CSC_Block(nn.Module):
-    def __init__(self, dim) -> None:
-        super().__init__()
+# class CSC_Block(nn.Module):
+#     def __init__(self, dim) -> None:
+#         super().__init__()
 
-        ker = 31
-        pad = ker // 2
-        self.in_conv = nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1),
-            nn.GELU(),
-        )
-        self.out_conv = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1)
-        # Horizontal Strip Convolution
-        self.dw_13 = nn.Conv2d(dim, dim, kernel_size=(1, ker), padding=(0, pad), stride=1, groups=dim)
-        # Vertical Strip Convolution
-        self.dw_31 = nn.Conv2d(dim, dim, kernel_size=(ker, 1), padding=(pad, 0), stride=1, groups=dim)
-        # Square Kernel Convolution
-        self.dw_33 = nn.Conv2d(dim, dim, kernel_size=ker, padding=pad, stride=1, groups=dim)
-        self.dw_11 = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1, groups=dim)
+#         ker = 31
+#         pad = ker // 2
+#         self.in_conv = nn.Sequential(
+#             nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1),
+#             nn.GELU(),
+#         )
+#         self.out_conv = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1)
+#         # Horizontal Strip Convolution
+#         self.dw_13 = nn.Conv2d(dim, dim, kernel_size=(1, ker), padding=(0, pad), stride=1, groups=dim)
+#         # Vertical Strip Convolution
+#         self.dw_31 = nn.Conv2d(dim, dim, kernel_size=(ker, 1), padding=(pad, 0), stride=1, groups=dim)
+#         # Square Kernel Convolution
+#         self.dw_33 = nn.Conv2d(dim, dim, kernel_size=ker, padding=pad, stride=1, groups=dim)
+#         self.dw_11 = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1, groups=dim)
 
-        self.act = nn.GELU()
+#         self.act = nn.GELU()
 
-    def forward(self, x):
-        out = self.in_conv(x)
-        out = x + self.dw_13(out) + self.dw_31(out) + self.dw_33(out) + self.dw_11(out)
-        out = self.act(out)
-        return self.out_conv(out)
+#     def forward(self, x):
+#         out = self.in_conv(x)
+#         out = x + self.dw_13(out) + self.dw_31(out) + self.dw_33(out) + self.dw_11(out)
+#         out = self.act(out)
+#         return self.out_conv(out)
     
 
 class Model(nn.Module):
@@ -577,8 +803,8 @@ class Model(nn.Module):
 
 if __name__ == '__main__':
     model = Model().cuda().eval()
-    x = torch.randn(1, 3, 512, 512).cuda()
-    mask = torch.randn(1, 1, 512, 512).cuda()
+    x = torch.randn(1, 3, 256, 256).cuda()
+    mask = torch.randn(1, 1, 256, 256).cuda()
     with torch.no_grad():
         out = model(x, mask)
         print(f"Output shape: {out.shape}")
