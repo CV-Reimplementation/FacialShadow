@@ -97,7 +97,7 @@ class DynConvLayer(nn.Module):
                     out_unshadow_mean = torch.cat((out_unshadow_mean,
                                                    out_unshadow[i][(mask_d[i] - mask[i]).expand_as(x[i]) == 1].reshape(
                                                        (x.shape[1], -1)).mean(-1).unsqueeze(0)), dim=0)
-            return mask * (out_shadow + x) + (1 - mask) * (out_unshadow + x), out_shadow_mean, out_unshadow_mean
+            return mask * (out_shadow + x) + (1 - mask) * (out_unshadow + x)
 
         else:
             #T1 = time.time()
