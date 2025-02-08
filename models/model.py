@@ -261,7 +261,7 @@ class ResidualBlock(nn.Module):
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, 3, padding=1),
             LayerNorm(in_channels),
-            nn.Mish(inplace=True),
+            nn.GELU(),
             nn.Conv2d(in_channels, in_channels, 3, padding=1),
             LayerNorm(in_channels)
         )
@@ -275,7 +275,7 @@ class MSGNet(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.down1 = nn.Conv2d(3, 32, 3, padding=1)  # 1/2
+        self.down1 = nn.Conv2d(4, 32, 3, padding=1)  # 1/2
         self.down2 = nn.Conv2d(32, 64, 3, padding=1)  # 1/4
 
         self.res_blocks = nn.Sequential(
@@ -284,7 +284,7 @@ class MSGNet(nn.Module):
         )
 
         self.up1 = nn.Conv2d(64, 32, 3, padding=1)
-        self.up2 = nn.Conv2d(32, 3, 3, padding=1)
+        self.up2 = nn.Conv2d(32, 1, 3, padding=1)
 
     def forward(self, x):
         x = F.relu(self.down1(x))
@@ -301,14 +301,14 @@ class CoarseGenerator(nn.Module):
         # Encoder
         self.enc1 = nn.Sequential(
             nn.Conv2d(4, 64, 4, 2, 1),  # 224 -> 112
-            nn.Mish(inplace=True)
+            nn.GELU()
         )
         self.enc2 = self._downblock(64, 128)  # 112 -> 56
         self.enc3 = self._downblock(128, 256)  # 56 -> 28
         
         # Swin-Transformer Bottleneck
-        self.swin1 = SWPSATransformerBlock(256)
-        self.swin2 = SWPSATransformerBlock(256)
+        self.swin1 = CSC_Block(256)
+        self.swin2 = CSC_Block(256)
         
         self.feat_norm = LayerNorm(256)  # 只对通道维度做归一化
         
@@ -317,9 +317,9 @@ class CoarseGenerator(nn.Module):
         self.dec2 = self._upblock(128 * 2, 64)
         self.final = nn.Sequential(
             nn.Conv2d(64 * 2, 64, 3, padding=1),
-            nn.Mish(inplace=True),
+            nn.GELU(),
             nn.Conv2d(64, 3, 3, padding=1),
-            nn.Mish(inplace=True),
+            nn.GELU(),
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         )
     
@@ -327,14 +327,14 @@ class CoarseGenerator(nn.Module):
         return nn.Sequential(
             nn.Conv2d(in_c, out_c, 3, padding=1),
             LayerNorm(out_c),
-            nn.Mish(inplace=True),
+            nn.GELU(),
         )
     
     def _upblock(self, in_c, out_c):
         return nn.Sequential(
             nn.Conv2d(in_c, out_c, 3, padding=1),
             LayerNorm(out_c),
-            nn.Mish(inplace=True),
+            nn.GELU(),
         )
     
     def forward(self, x, mask):
@@ -360,22 +360,88 @@ class CoarseGenerator(nn.Module):
         return self.final(d2)
     
 
-class IlluminationCorrector(nn.Module):
-    """可学习非线性光照校正"""
-    def __init__(self):
+class ConditionNet(nn.Module):
+    def __init__(self, in_ch=3, nf=32):
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(3, 128),
-            nn.GELU(),
-            nn.Linear(128, 6)  # 输出3通道的scale和bias
-        )
-    
-    def forward(self, x, params):
-        # params: [B, 3]
-        affines = self.mlp(params)  # [B, 6]
-        scale = affines[:, :3].view(-1, 3, 1, 1)
-        bias = affines[:, 3:].view(-1, 3, 1, 1)
-        return x * (1 + scale) + bias  # 保持原始光照的残差形式
+        self.conv1 = nn.Conv2d(in_ch, nf, 7, 2, 1)
+        self.conv2 = nn.Conv2d(nf, nf, 3, 2, 1)
+        self.conv3 = nn.Conv2d(nf, nf, 3, 2, 1)
+        self.act = nn.GELU()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+
+    def forward(self, x):
+        out = self.act(self.conv1(x))
+        out = self.act(self.conv2(out))
+        out = self.act(self.conv3(out))
+        cond = self.avg_pool(out)
+        return cond
+
+
+class GFM(nn.Module):
+    def __init__(self, cond_nf, in_nf, base_nf):
+        super().__init__()
+        self.mlp_scale = nn.Conv2d(cond_nf, base_nf, 1, 1, 0)
+        self.mlp_shift = nn.Conv2d(cond_nf, base_nf, 1, 1, 0)
+        self.conv = nn.Conv2d(in_nf, base_nf, 1, 1, 0)
+        self.act = nn.GELU()
+
+    def forward(self, x, cond):
+        feat = self.conv(x)
+        scale = self.mlp_scale(cond)
+        shift = self.mlp_shift(cond)
+        out = feat * scale + shift + feat
+        out = self.act(out)
+        return out
+
+
+class IlluminationCorrector(nn.Module):
+    def __init__(self, in_ch=4,
+                 out_ch=3,
+                 base_nf=64,
+                 cond_nf=32):
+        super().__init__()
+        self.condnet = ConditionNet(in_ch, cond_nf)
+        self.gfm1 = GFM(cond_nf, in_ch, base_nf)
+        self.gfm2 = GFM(cond_nf, base_nf, base_nf)
+        self.gfm3 = GFM(cond_nf, base_nf, out_ch)
+
+    def forward(self, x, shadow_mask):
+        cond = self.condnet(torch.cat([x, shadow_mask], dim=1))
+        out = self.gfm1(torch.cat([x, shadow_mask], dim=1), cond)
+        out = self.gfm2(out, cond)
+        out = self.gfm3(out, cond)
+        return out
+
+
+class NILUT(nn.Module):
+    # NILUT: neural implicit 3D LUT
+    def __init__(self, in_ch=4, nf=256, n_layer=3, out_ch=3):
+        super().__init__()
+        self.in_ch = in_ch
+        layers = list()
+        layers.append(nn.Linear(in_ch, nf))
+        layers.append(nn.GELU())
+        for _ in range(n_layer):
+            layers.append(nn.Linear(nf, nf))
+            layers.append(nn.Tanh())
+        layers.append(nn.Linear(nf, out_ch))
+        self.body = nn.Sequential(*layers)
+
+    def forward(self, x, mask):
+        # x size: [n, c, h, w]
+        inp = torch.cat([x, mask], dim=1)
+        n, c, h, w = x.size()
+
+        inp = torch.permute(inp, (0, 2, 3, 1))
+        inp = torch.reshape(inp, (n, h * w, self.in_ch))
+
+        res = self.body(inp)
+        
+        res = torch.reshape(res, (n, h, w, c))
+        res = torch.permute(res, (0, 3, 1, 2))
+
+        out = x + res
+        return out
     
 
 class RefinementModule(nn.Module):
@@ -387,9 +453,9 @@ class RefinementModule(nn.Module):
         # 修改下采样层，因为输入是224x224
         self.downsample = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, padding=1),  # 224 -> 112
-            nn.Mish(inplace=True),
+            nn.GELU(),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),  # 112 -> 56
-            nn.Mish(inplace=True),
+            nn.GELU(),
             LayerNorm(64)
         )
 
@@ -400,7 +466,7 @@ class RefinementModule(nn.Module):
         # 下采样到28x28
         self.downsample2 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=3, padding=1),  # 56 -> 28
-            nn.Mish(inplace=True),
+            nn.GELU(),
             LayerNorm(128)
         )
 
@@ -411,21 +477,22 @@ class RefinementModule(nn.Module):
         # 上采样回原始分辨率
         self.upsample = nn.Sequential(
             nn.Conv2d(128, 64, kernel_size=3, padding=1),  # 28 -> 56
-            nn.Mish(inplace=True),
+            nn.GELU(),
             LayerNorm(64),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),  # 56 -> 112
-            nn.Mish(inplace=True),
+            nn.GELU(),
             LayerNorm(64),
             nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 112 -> 224
-            nn.Mish(inplace=True),
+            nn.GELU(),
             LayerNorm(32)
         )
 
         self.final_conv = nn.Conv2d(32, 3, kernel_size=3, padding=1)
         self.illum_corrector = IlluminationCorrector()
-        self.msg_net = MSGNet()
+        self.lut = NILUT()
 
-    def forward(self, coarse_img):
+
+    def forward(self, coarse_img, shadow_mask):
 
         # 初始特征提取
         x = self.conv1(coarse_img)
@@ -444,16 +511,13 @@ class RefinementModule(nn.Module):
         b = self.norm2(x)
         b = self.swin2(b)
 
-        # 特征聚合
-        global_feat = F.adaptive_avg_pool2d(b, (1, 1)).squeeze(-1).squeeze(-1)
-
         # 上采样和最终处理
         x = self.upsample(b)  # [B, 32, 224, 224]
         x = self.final_conv(x)  # [B, 3, 224, 224]
 
-        # 光照校正和细节增强
-        corrected = self.illum_corrector(coarse_img, global_feat[:, :3])
-        detail = self.msg_net(coarse_img)
+        # 光照校正和色彩增强
+        corrected = self.illum_corrector(coarse_img, shadow_mask)
+        detail = self.lut(coarse_img, shadow_mask)
 
         return corrected + detail + x
 
@@ -465,19 +529,19 @@ class CSC_Block(nn.Module):
         ker = 31
         pad = ker // 2
         self.in_conv = nn.Sequential(
-                    nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1),
-                    nn.Mish(inplace=True),
-                    )
+            nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1),
+            nn.GELU(),
+        )
         self.out_conv = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1)
         # Horizontal Strip Convolution
-        self.dw_13 = nn.Conv2d(dim, dim, kernel_size=(1, ker), padding=(0 , pad), stride=1, groups=dim)
+        self.dw_13 = nn.Conv2d(dim, dim, kernel_size=(1, ker), padding=(0, pad), stride=1, groups=dim)
         # Vertical Strip Convolution
-        self.dw_31 = nn.Conv2d(dim, dim, kernel_size=(ker,1), padding=(pad , 0), stride=1, groups=dim)
+        self.dw_31 = nn.Conv2d(dim, dim, kernel_size=(ker, 1), padding=(pad, 0), stride=1, groups=dim)
         # Square Kernel Convolution
         self.dw_33 = nn.Conv2d(dim, dim, kernel_size=ker, padding=pad, stride=1, groups=dim)
         self.dw_11 = nn.Conv2d(dim, dim, kernel_size=1, padding=0, stride=1, groups=dim)
 
-        self.act = nn.Mish(inplace=True)
+        self.act = nn.GELU()
 
     def forward(self, x):
         out = self.in_conv(x)
@@ -491,39 +555,30 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         # 阴影掩码预测
-        self.mask_predictor = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
-            nn.Mish(inplace=True),
-            nn.Conv2d(32, 64, 3, padding=1),
-            nn.Mish(inplace=True),
-            CSC_Block(64),
-            nn.Conv2d(64, 32, 3, padding=1),
-            nn.Mish(inplace=True),
-            nn.Conv2d(32, 1, 3, padding=1),
-            nn.Sigmoid()
-        )
+        self.mask_predictor = MSGNet()
         
         # 粗糙生成器
         self.coarse = CoarseGenerator()
         # 精修模块
         self.refinement = RefinementModule()
     
-    def forward(self, x, mask=None):
+    def forward(self, x, mask):
         
         # 预测阴影掩码
-        shadow_mask = self.mask_predictor(x)
+        shadow_mask = self.mask_predictor(torch.cat([x, mask], dim=1))
         
         # 粗糙去除
         coarse = self.coarse(x, shadow_mask)
         
         # 精修
-        refined = self.refinement(coarse)
+        refined = self.refinement(coarse, shadow_mask)
         return refined
     
 
 if __name__ == '__main__':
     model = Model().cuda().eval()
     x = torch.randn(1, 3, 512, 512).cuda()
+    mask = torch.randn(1, 1, 512, 512).cuda()
     with torch.no_grad():
-        out = model(x)
+        out = model(x, mask)
         print(f"Output shape: {out.shape}")
