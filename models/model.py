@@ -115,7 +115,7 @@ class DynConvLayer(nn.Module):
             w_conv_1 = self.conv2d.weight
             FN, C, ksize1, ksize, = w_conv_1.shape
             x1 = self.reflection_pad(x_ori)
-            x_k = torch.nn.functional.unfold(x1, ksize, dilation=dilation, stride=1) #N*(Ckk)*(hw)
+            x_k = F.unfold(x1, ksize, dilation=dilation, stride=1) #N*(Ckk)*(hw)
             x_k_k = x_k.reshape(x_k.shape[0],Cx,ksize,ksize,x_k.shape[2]).permute(0,1,4,2,3) #N*C*(hw)*k*k
             out_shadow_conv = conv(x_k_k,w_conv_1,md)+self.conv2d.bias.unsqueeze(0).unsqueeze(-1) #N*C*num(mask)
 
@@ -419,8 +419,8 @@ class SWPSA(nn.Module):
         k = rearrange(k, 'b c h w -> b c (h w)')
         v = rearrange(v, 'b c h w -> b c (h w)')
 
-        q = torch.nn.functional.normalize(q, dim=-1)
-        k = torch.nn.functional.normalize(k, dim=-1)
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
         attn = (q.transpose(-2,-1) @ k)/self.window_size
         attn = attn.softmax(dim=-1)
         out = (v @ attn )
@@ -437,8 +437,8 @@ class SWPSA(nn.Module):
         k = rearrange(k, 'b c h w -> b c (h w)')
         v = rearrange(v, 'b c h w -> b c (h w)')
 
-        q = torch.nn.functional.normalize(q, dim=-1)
-        k = torch.nn.functional.normalize(k, dim=-1)
+        q = F.normalize(q, dim=-1)
+        k = F.normalize(k, dim=-1)
 
         attn = (q.transpose(-2,-1) @ k)/self.window_size
         mask = self.create_mask(shortcut)
@@ -524,13 +524,10 @@ class CoarseGenerator(nn.Module):
         super().__init__()
         # Encoder
         self.enc1 = nn.Sequential(
-            nn.Conv2d(4, 16, 3, 1, 1),  # 224 -> 112
-            nn.GELU()
+            nn.Conv2d(4, 64, 3, 1, 1),  # 224 -> 112
+            nn.GELU(),
+            LayerNorm(64)
         )
-        self.enc2 = self._downblock(16, 32)  # 112 -> 56
-        self.enc3 = self._downblock(32, 64)  # 56 -> 28
-
-        self.feat_norm = LayerNorm(64)  # 只对通道维度做归一化
         
         # D-DHAN
         self.block1 = AggBlock(64, ks1=1, ks2=3, dilation1=1,
@@ -543,25 +540,9 @@ class CoarseGenerator(nn.Module):
                             dilation2=64, mode=4)
         
         # Decoder
-        self.dec1 = self._upblock(64, 32)
-        self.dec2 = self._upblock(32, 16)
         self.final = nn.Sequential(
-            nn.Conv2d(16, 3, 3, padding=1),
+            nn.Conv2d(64, 3, 3, padding=1),
             nn.GELU()
-        )
-    
-    def _downblock(self, in_c, out_c):
-        return nn.Sequential(
-            nn.Conv2d(in_c, out_c, 3, padding=1),
-            LayerNorm(out_c),
-            nn.GELU(),
-        )
-    
-    def _upblock(self, in_c, out_c):
-        return nn.Sequential(
-            nn.Conv2d(in_c, out_c, 3, padding=1),
-            LayerNorm(out_c),
-            nn.GELU(),
         )
     
     def forward(self, x, mask):
@@ -569,21 +550,15 @@ class CoarseGenerator(nn.Module):
         x = torch.cat([x, mask], dim=1)
         
         # Encoder
-        e1 = self.enc1(x)    # [B, 64, 112, 112]
-        e2 = self.enc2(e1)   # [B, 128, 56, 56]
-        e3 = self.enc3(e2)   # [B, 256, 28, 28]
+        e = self.enc1(x)    # [B, 64, 112, 112]
         
-        b = self.feat_norm(e3)
-        
-        b0 = self.block1(b, mask)
+        b0 = self.block1(e, mask)
         b1 = self.block2(b0, mask)
         b2 = self.block3(b1, mask)
         b3 = self.block4(b2, mask, b1)
         
         # Decoder
-        d1 = self.dec1(b3)
-        d2 = self.dec2(d1)
-        return self.final(d2)
+        return self.final(b3)
     
 
 class ConditionNet(nn.Module):
@@ -715,7 +690,7 @@ class RefinementModule(nn.Module):
 
         self.final_conv = nn.Conv2d(32, 3, kernel_size=3, padding=1)
         self.illum_corrector = IlluminationCorrector()
-        self.lut = NILUT()
+        # self.lut = NILUT()
 
 
     def forward(self, coarse_img, shadow_mask):
@@ -743,9 +718,9 @@ class RefinementModule(nn.Module):
 
         # 光照校正和色彩增强
         corrected = self.illum_corrector(coarse_img, shadow_mask)
-        detail = self.lut(coarse_img, shadow_mask)
+        # detail = self.lut(coarse_img, shadow_mask)
 
-        return corrected + detail + x
+        return corrected + x
 
 
 # class CSC_Block(nn.Module):
