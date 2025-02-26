@@ -776,6 +776,131 @@ class Model(nn.Module):
         return refined
     
 
+class Ab1(nn.Module):
+    """完整的阴影去除网络"""
+    def __init__(self):
+        super().__init__()
+        # 阴影掩码预测
+        # self.mask_predictor = MSGNet()
+        
+        # 粗糙生成器
+        self.coarse = CoarseGenerator()
+        # 精修模块
+        self.refinement = RefinementModule()
+    
+    def forward(self, x, mask):
+        
+        # 预测阴影掩码
+        # shadow_mask = self.mask_predictor(torch.cat([x, mask], dim=1))
+        
+        # 粗糙去除
+        coarse = self.coarse(x, mask)
+        
+        # 精修
+        refined = self.refinement(coarse, mask)
+        return refined
+    
+
+class Ab2(nn.Module):
+    """完整的阴影去除网络"""
+    def __init__(self):
+        super().__init__()
+        # 阴影掩码预测
+        self.mask_predictor = MSGNet()
+        
+        # 粗糙生成器
+        # self.coarse = CoarseGenerator()
+        # 精修模块
+        self.refinement = RefinementModule()
+    
+    def forward(self, x, mask):
+        
+        # 预测阴影掩码
+        shadow_mask = self.mask_predictor(torch.cat([x, mask], dim=1))
+        
+        # 粗糙去除
+        # coarse = self.coarse(x, shadow_mask)
+        
+        # 精修
+        refined = self.refinement(x, shadow_mask)
+        return refined
+    
+
+class Ab3(nn.Module):
+    """完整的阴影去除网络"""
+    def __init__(self):
+        super().__init__()
+        # 阴影掩码预测
+        self.mask_predictor = MSGNet()
+        
+        # 粗糙生成器
+        self.coarse = CoarseGenerator()
+        # 精修模块
+        # self.refinement = RefinementModule()
+    
+    def forward(self, x, mask):
+        
+        # 预测阴影掩码
+        shadow_mask = self.mask_predictor(torch.cat([x, mask], dim=1))
+        
+        # 粗糙去除
+        refined = self.coarse(x, shadow_mask)
+        
+        # 精修
+        # refined = self.refinement(coarse, shadow_mask)
+        return refined
+    
+
+class Ab4(nn.Module):
+    """完整的阴影去除网络"""
+    def __init__(self):
+        super().__init__()
+        # 阴影掩码预测
+        # self.mask_predictor = MSGNet()
+        
+        # 粗糙生成器
+        self.coarse = CoarseGenerator()
+        # 精修模块
+        # self.refinement = RefinementModule()
+    
+    def forward(self, x, mask):
+        
+        # 预测阴影掩码
+        # shadow_mask = self.mask_predictor(torch.cat([x, mask], dim=1))
+        
+        # 粗糙去除
+        refined = self.coarse(x, mask)
+        
+        # 精修
+        # refined = self.refinement(coarse, shadow_mask)
+        return refined
+    
+
+class Ab5(nn.Module):
+    """完整的阴影去除网络"""
+    def __init__(self):
+        super().__init__()
+        # 阴影掩码预测
+        # self.mask_predictor = MSGNet()
+        
+        # 粗糙生成器
+        # self.coarse = CoarseGenerator()
+        # 精修模块
+        self.refinement = RefinementModule()
+    
+    def forward(self, x, mask):
+        
+        # 预测阴影掩码
+        # shadow_mask = self.mask_predictor(torch.cat([x, mask], dim=1))
+        
+        # 粗糙去除
+        # coarse = self.coarse(x, shadow_mask)
+        
+        # 精修
+        refined = self.refinement(x, mask)
+        return refined
+    
+
 if __name__ == '__main__':
     model = Model().cuda().eval()
     x = torch.randn(1, 3, 256, 256).cuda()
