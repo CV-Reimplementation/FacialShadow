@@ -22,4 +22,5 @@ from .RASM import RASM
 from .SADC import SADC
 from .PRNet import PRNet
 from .SG_ShadowNet import SG_ShadowNet
+from .LG_ShadowNet import LG_ShadowNet
 from .model import Model
