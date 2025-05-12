@@ -44,7 +44,7 @@ def train():
     testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
 
     # Model & Loss
-    model = DeShadowNet()
+    model = model_registry.get(opt.MODEL.SESSION)()
     criterion_psnr = torch.nn.SmoothL1Loss()
     criterion_lpips = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(device)
 
@@ -117,14 +117,14 @@ def train():
                     'state_dict': model.state_dict(),
                 }, epoch, opt.MODEL.SESSION, opt.TRAINING.SAVE_DIR)
 
-            accelerator.log({
-                "PSNR": psnr1,
-                "SSIM": ssim1,
-                "LPIPS": lpips1
-            }, step=epoch)
+            # accelerator.log({
+            #     "PSNR": psnr,
+            #     "SSIM": ssim,
+            #     "LPIPS": lpips
+            # }, step=epoch)
 
             if accelerator.is_local_main_process:
-                print("epoch: {}, best PSNR1: {}, best PSNR2: {}, best epoch: {}".format(epoch, best_psnr, best_psnr2, best_epoch))
+                print("epoch: {}, best PSNR: {}, best epoch: {}".format(epoch, best_psnr, best_epoch))
 
     accelerator.end_training()
 

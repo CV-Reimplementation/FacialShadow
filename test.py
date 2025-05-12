@@ -36,8 +36,8 @@ def test():
     testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
 
     # Model & Metrics
-    model = LG_ShadowNet()
-
+    model = model_registry.get(opt.MODEL.SESSION)()
+    
     load_checkpoint(model, opt.TESTING.WEIGHT)
 
     model, testloader = accelerator.prepare(model, testloader)
