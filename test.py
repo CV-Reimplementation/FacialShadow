@@ -1,4 +1,4 @@
-from data import get_validation_data, get_training_data
+from data import get_data
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -23,86 +23,54 @@ def test():
     accelerator = Accelerator()
     device = accelerator.device
 
-    os.makedirs(os.path.join(opt.MODEL.SESSION, 'UCB'), exist_ok=True)
-    os.makedirs(os.path.join(opt.MODEL.SESSION, 'ASFW'), exist_ok=True)
+    os.makedirs(opt.MODEL.SESSION, exist_ok=True)
 
     criterion_lpips = LearnedPerceptualImagePatchSimilarity(net_type='alex', normalize=True).to(device)
 
     # Data Loader
-    val_file1 = opt.TRAINING.VAL_FILE1
-    val_file2 = opt.TRAINING.VAL_FILE2
+    val_file = opt.TRAINING.VAL_FILE
 
-    val_dataset1 = get_training_data(val_file1, None)
-    val_dataset2 = get_validation_data(val_file2, None)
+    val_dataset = get_data(val_file, opt.MODEL.INPUT, opt.MODEL.TARGET, 'test', opt.TRAINING.ORI,
+                           {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
 
-    testloader1 = DataLoader(dataset=val_dataset1, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
-    testloader2 = DataLoader(dataset=val_dataset2, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
+    testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
 
     # Model & Metrics
     model = LG_ShadowNet()
 
     load_checkpoint(model, opt.TESTING.WEIGHT)
 
-    model, testloader1, testloader2 = accelerator.prepare(model, testloader1, testloader2)
+    model, testloader = accelerator.prepare(model, testloader)
 
     model.eval()
 
-    size1 = len(testloader1)
-    size2 = len(testloader2)
+    size = len(testloader)
 
     stat_psnr = 0
     stat_ssim = 0
     stat_lpips = 0
     stat_rmse = 0
 
-    for idx, test_data in enumerate(tqdm(testloader1)):
+    for _, test_data in enumerate(tqdm(testloader)):
         # get the inputs; data is a list of [targets, inputs, filename]
         inp = test_data[0].contiguous()
         tar = test_data[1]
-        mas = mask_generator(inp, tar)
+        mas = test_data[3]
 
         with torch.no_grad():
             res = model(inp, mas).clamp(0, 1)
 
-        save_image(res, os.path.join(opt.MODEL.SESSION, 'ASFW', str(idx) + '.png'))
+        save_image(res, os.path.join(opt.MODEL.SESSION, test_data[2][0]))
 
         stat_psnr += peak_signal_noise_ratio(res, tar, data_range=1).item()
         stat_ssim += structural_similarity_index_measure(res, tar, data_range=1).item()
         stat_lpips += criterion_lpips(res, tar).item()
         stat_rmse += mean_squared_error(torch.mul(res, 255).flatten(), torch.mul(tar, 255).flatten(), squared=False).item()
 
-    stat_psnr /= size1
-    stat_ssim /= size1
-    stat_lpips /= size1
-    stat_rmse /= size1
-
-    print("RMSE: {}, PSNR: {}, SSIM: {}, LPIPS: {}".format(stat_rmse, stat_psnr, stat_ssim, stat_lpips))
-
-    stat_psnr = 0
-    stat_ssim = 0
-    stat_lpips = 0
-    stat_rmse = 0
-
-    for idx, test_data in enumerate(tqdm(testloader2)):
-        # get the inputs; data is a list of [targets, inputs, filename]
-        inp = test_data[0].contiguous()
-        tar = test_data[1]
-        mas = mask_generator(inp, tar)
-
-        with torch.no_grad():
-            res = model(inp, mas).clamp(0, 1)
-
-        save_image(res, os.path.join(opt.MODEL.SESSION, 'UCB', str(idx) + '.png'))
-
-        stat_psnr += peak_signal_noise_ratio(res, tar, data_range=1).item()
-        stat_ssim += structural_similarity_index_measure(res, tar, data_range=1).item()
-        stat_lpips += criterion_lpips(res, tar).item()
-        stat_rmse += mean_squared_error(torch.mul(res, 255).flatten(), torch.mul(tar, 255).flatten(), squared=False).item()
-
-    stat_psnr /= size2
-    stat_ssim /= size2
-    stat_lpips /= size2
-    stat_rmse /= size2
+    stat_psnr /= size
+    stat_ssim /= size
+    stat_lpips /= size
+    stat_rmse /= size
 
     print("RMSE: {}, PSNR: {}, SSIM: {}, LPIPS: {}".format(stat_rmse, stat_psnr, stat_ssim, stat_lpips))
 

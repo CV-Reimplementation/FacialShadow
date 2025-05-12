@@ -20,7 +20,7 @@ def seed_everything(seed=3407):
 def save_checkpoint(state, epoch, model_name, outdir):
     if not os.path.exists(outdir):
         os.makedirs(outdir)
-    checkpoint_file = os.path.join(outdir, model_name + '.pth')
+    checkpoint_file = os.path.join(outdir, model_name + '_' + epoch + '.pth')
     torch.save(state, checkpoint_file)
 
 

@@ -9,7 +9,7 @@ from torchmetrics.functional.regression import mean_squared_error
 from tqdm import tqdm
 
 from config import Config
-from data import get_training_data, get_validation_data
+from data import get_data
 from models import *
 from utils import *
 
@@ -33,17 +33,15 @@ def train():
 
     # Data Loader
     train_file = opt.TRAINING.TRAIN_FILE
-    val_file1 = opt.TRAINING.VAL_FILE1
-    val_file2 = opt.TRAINING.VAL_FILE2
+    val_file = opt.TRAINING.VAL_FILE1
 
-    train_dataset = get_training_data(train_file, {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
+    train_dataset = get_data(train_file, opt.MODEL.INPUT, opt.MODEL.TARGET, 'train', opt.TRAINING.ORI,
+                             {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
     trainloader = DataLoader(dataset=train_dataset, batch_size=opt.OPTIM.BATCH_SIZE, shuffle=True, num_workers=32, drop_last=False, pin_memory=True)
     
-    val_dataset1 = get_validation_data(val_file1, None)
-    testloader1 = DataLoader(dataset=val_dataset1, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
-    
-    val_dataset2 = get_validation_data(val_file2, None)
-    testloader2 = DataLoader(dataset=val_dataset2, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
+    val_dataset = get_data(val_file, opt.MODEL.INPUT, opt.MODEL.TARGET, 'test', opt.TRAINING.ORI,
+                           {'w': opt.TRAINING.PS_W, 'h': opt.TRAINING.PS_H})
+    testloader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=16, drop_last=False, pin_memory=True)
 
     # Model & Loss
     model = DeShadowNet()
@@ -54,18 +52,16 @@ def train():
     optimizer_b = optim.AdamW(model.parameters(), lr=opt.OPTIM.LR_INITIAL, betas=(0.9, 0.999), eps=1e-8)
     scheduler_b = optim.lr_scheduler.CosineAnnealingLR(optimizer_b, opt.OPTIM.NUM_EPOCHS, eta_min=opt.OPTIM.LR_MIN)
 
-    trainloader, testloader1, testloader2 = accelerator.prepare(trainloader, testloader1, testloader2)
+    trainloader, testloader = accelerator.prepare(trainloader, testloader)
     model = accelerator.prepare(model)
     optimizer_b, scheduler_b = accelerator.prepare(optimizer_b, scheduler_b)
 
     start_epoch = 1
     best_epoch = 1
     
-    best_psnr1 = 0
-    best_psnr2 = 0
+    best_psnr = 0
 
-    size1 = len(testloader1)
-    size2 = len(testloader2)
+    size = len(testloader)
 
     # training
     for epoch in range(start_epoch, opt.OPTIM.NUM_EPOCHS + 1):
@@ -75,7 +71,7 @@ def train():
             # get the inputs; data is a list of [target, input, filename]
             inp = data[0].contiguous()
             tar = data[1]
-            mas = mask_generator(inp, tar)
+            mas = data[3]
 
             # forward
             optimizer_b.zero_grad()
@@ -97,55 +93,38 @@ def train():
         if epoch % opt.TRAINING.VAL_AFTER_EVERY == 0:
             model.eval()
 
-            psnr1 = 0
-            for _, data in enumerate(tqdm(testloader1, disable=not accelerator.is_local_main_process)):
+            psnr = 0
+            for _, data in enumerate(tqdm(testloader, disable=not accelerator.is_local_main_process)):
                 # get the inputs; data is a list of [targets, inputs, filename]
                 inp = data[0].contiguous()
                 tar = data[1]
-                mas = mask_generator(inp, tar)
+                mas = data[3]
 
                 with torch.no_grad():
                     res = model(inp, mas).clamp(0, 1)
 
                 res, tar = accelerator.gather((res, tar))
 
-                psnr1 += peak_signal_noise_ratio(res, tar, data_range=1).item()
+                psnr += peak_signal_noise_ratio(res, tar, data_range=1).item()
 
-            psnr1 /= size1
+            psnr /= size
 
-            psnr2 = 0
-            for _, data in enumerate(tqdm(testloader2, disable=not accelerator.is_local_main_process)):
-                # get the inputs; data is a list of [targets, inputs, filename]
-                inp = data[0].contiguous()
-                tar = data[1]
-                mas = mask_generator(inp, tar)
-
-                with torch.no_grad():
-                    res = model(inp, mas).clamp(0, 1)
-
-                res, tar = accelerator.gather((res, tar))
-
-                psnr2 += peak_signal_noise_ratio(res, tar, data_range=1).item()
-
-            psnr2 /= size2
-
-            if psnr1 > best_psnr1 and psnr2 > best_psnr2:
+            if psnr > best_psnr:
                 # save model
                 best_epoch = epoch
-                best_psnr1 = psnr1
-                best_psnr2 = psnr2
+                best_psnr = psnr
                 save_checkpoint({
                     'state_dict': model.state_dict(),
                 }, epoch, opt.MODEL.SESSION, opt.TRAINING.SAVE_DIR)
 
-            # accelerator.log({
-            #     "PSNR": psnr1,
-            #     "SSIM": ssim1,
-            #     "LPIPS": lpips1
-            # }, step=epoch)
+            accelerator.log({
+                "PSNR": psnr1,
+                "SSIM": ssim1,
+                "LPIPS": lpips1
+            }, step=epoch)
 
             if accelerator.is_local_main_process:
-                print("epoch: {}, best PSNR1: {}, best PSNR2: {}, best epoch: {}".format(epoch, best_psnr1, best_psnr2, best_epoch))
+                print("epoch: {}, best PSNR1: {}, best PSNR2: {}, best epoch: {}".format(epoch, best_psnr, best_psnr2, best_epoch))
 
     accelerator.end_training()
 
